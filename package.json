@@ -1,0 +1,73 @@
+{
+  "name": "@malevichai/nova-ts",
+  "version": "1.0.0",
+  "description": "TypeScript types and generator for Nova resources with OGM metadata",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "commonjs",
+  "keywords": [
+    "typescript",
+    "openapi",
+    "schema",
+    "generator",
+    "nova",
+    "ogm",
+    "resources",
+    "types"
+  ],
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    },
+    "./generator": {
+      "types": "./dist/generator.d.ts",
+      "import": "./dist/generator.js",
+      "require": "./dist/generator.js"
+    },
+    "./resource-generator": {
+      "types": "./dist/resourceGenerator.d.ts",
+      "import": "./dist/resourceGenerator.js",
+      "require": "./dist/resourceGenerator.js"
+    }
+  },
+  "bin": {
+    "generate": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "prepare": "npm run build",
+    "test": "./test/run-tests.sh",
+    "test:quick": "npm run build && node test/test-usage.js",
+    "generate": "node dist/cli.js",
+    "generate:resources": "node -e \"const { generateResources } = require('./dist/resourceGenerator'); generateResources(process.argv[1], process.argv[2])\"",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/malevichai/nova-ts.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "author": "Aleksandr Lobanov",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/malevichai/nova-ts/issues"
+  },
+  "homepage": "https://github.com/malevichai/nova-ts#readme",
+  "dependencies": {
+    "handlebars": "^4.7.8",
+    "json-schema-to-typescript": "^13.1.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "@types/node": "^20.14.9"
+  }
+}

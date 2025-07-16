@@ -1,0 +1,83 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Sample API",
+    "version": "1.0.0"
+  },
+  "components": {
+    "schemas": {
+      "User": {
+        "type": "object",
+        "properties": {
+          "uid": { "type": "string" },
+          "created_at": { "type": "string" },
+          "updated_at": { "type": "string" },
+          "name": { "type": "string" },
+          "email": { "type": "string" }
+        },
+        "required": ["uid", "created_at", "updated_at", "name", "email"],
+        "_malevich_ogm_node": {
+          "label": "User",
+          "name": "User",
+          "relations": []
+        }
+      },
+      "Task": {
+        "type": "object",
+        "properties": {
+          "uid": { "type": "string" },
+          "created_at": { "type": "string" },
+          "updated_at": { "type": "string" },
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "status": { "type": "string" }
+        },
+        "required": ["uid", "created_at", "updated_at", "title"],
+        "_malevich_ogm_node": {
+          "label": "Task",
+          "name": "Task",
+          "relations": [
+            {
+              "cardinality": "many_to_one",
+              "incoming": false,
+              "required": false,
+              "target": "User",
+              "type": "ASSIGNED_TO"
+            }
+          ]
+        }
+      },
+      "ResourceEdge_User_Link_": {
+        "type": "object",
+        "properties": {
+          "$resource": { "$ref": "#/components/schemas/User" },
+          "$edges": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Link" }
+          }
+        }
+      },
+      "Link": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "TaskResource": {
+        "type": "object",
+        "properties": {
+          "task": { "$ref": "#/components/schemas/Task" },
+          "assigned_to": {
+            "anyOf": [
+              { "$ref": "#/components/schemas/ResourceEdge_User_Link_" },
+              { "type": "null" }
+            ]
+          }
+        },
+        "required": ["task"],
+        "_resource": {
+          "name": "TaskResource",
+          "type": "proxy"
+        }
+      }
+    }
+  }
+} 
