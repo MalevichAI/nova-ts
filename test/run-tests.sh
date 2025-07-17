@@ -21,7 +21,7 @@ fi
 
 # Test TypeScript type safety
 echo "🔍 Testing TypeScript type safety..."
-npx tsc --noEmit test/test-types-local.ts --moduleResolution node --esModuleInterop --strict
+npx tsc --noEmit test/test-types-local.ts --moduleResolution node --esModuleInterop --strict --target ES2020
 if [ $? -ne 0 ]; then
     echo "❌ TypeScript type safety tests failed"
     exit 1

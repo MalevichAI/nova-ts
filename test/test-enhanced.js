@@ -1,5 +1,7 @@
 // Test enhanced resource generation with explicit pivot metadata
-const fs = require('fs');
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+import fs from 'node:fs';
 
 async function testEnhancedGeneration() {
   const { generateResources } = require('../dist/resourceGenerator');

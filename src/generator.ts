@@ -1,6 +1,19 @@
 import { readFileSync } from 'node:fs'
 import { compile } from 'json-schema-to-typescript'
 
+function isUrl(path: string): boolean {
+  return path.startsWith('http://') || path.startsWith('https://')
+}
+
+async function readSource(input: string): Promise<string> {
+  if (isUrl(input)) {
+    const res = await fetch(input)
+    if (!res.ok) throw new Error(`Failed to fetch schema from ${input}: ${res.status} ${res.statusText}`)
+    return await res.text()
+  }
+  return readFileSync(input, 'utf8')
+}
+
 interface MalevichOgmNode {
   label: string
   name: string
@@ -22,8 +35,8 @@ interface SchemaWithOgm {
   [key: string]: any
 }
 
-export async function generate(path: string): Promise<string> {
-  const source = readFileSync(path, 'utf8')
+export async function generate(sourcePath: string): Promise<string> {
+  const source = await readSource(sourcePath)
   const data = JSON.parse(source)
   
   const schemas = extractSchemas(data)

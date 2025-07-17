@@ -45,3 +45,8 @@ test/*-output.*
 # Temporary files
 *.tmp
 *.temp 
+
+# Ignore generated resources and local schemas
+generated/
+*.py
+schema.json 

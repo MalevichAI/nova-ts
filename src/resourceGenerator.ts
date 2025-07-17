@@ -1,11 +1,11 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
-import { resolve, dirname, join } from 'node:path'
-import { compile } from 'json-schema-to-typescript'
-import { generate as generateNodes } from './generator'
+import { join } from 'node:path'
+import { generate as generateNodes } from './generator.js'
 
 interface ResourceMeta {
-  name: string
+  name?: string
   type: 'proxy' | 'create' | 'update' | 'link'
+  info?: any
 }
 
 interface SchemaWithResource {
@@ -33,34 +33,40 @@ export async function generateResources(schemaPath: string, outDir: string): Pro
   const referencedTypes = new Set<string>()
 
   const resourceInterfaces: string[] = []
+  const usedEdgeTypes = new Set<string>()
   for (const { name, schema } of proxySchemas) {
-    const cleanSchema = { ...schema }
-    delete cleanSchema._resource
+    const meta = (schema._resource as any) || {}
+    const info = meta.info || {}
 
-    // Preserve internal $ref links by converting them to tsType so that we reference
-    // already generated node interfaces instead of falling back to `string`
-    const cleaned = removeReferences(cleanSchema, referencedTypes)
+    const pivotType: string = info.pivot_type || mapResourceToNodeType(name, schema)
+    const pivotKey: string = info.pivot_key || findPivotField(schema, pivotType) || 'uid'
+    referencedTypes.add(pivotType)
 
-    const ts = await compile(cleaned, name, {
-      bannerComment: '',
-      style: { singleQuote: true, semi: false },
-      declareExternallyReferenced: false
-    })
-    
-    // Find pivot field and make resource extend Resource<PivotType, PivotKey>
-    const nodeType = mapResourceToNodeType(name, schema)
-    const pivotField = findPivotField(schema, nodeType)
-    
-    if (pivotField) {
-      referencedTypes.add(nodeType)
-      const modifiedTs = ts.replace(
-        `export interface ${name} {`,
-        `export interface ${name} extends Resource<${nodeType}, '${pivotField}'> {`
-      )
-      resourceInterfaces.push(modifiedTs.trim())
-    } else {
-      resourceInterfaces.push(ts.trim())
-    }
+    const mounts = info.mounts ? Object.entries(info.mounts) : []
+    const mountLines = mounts
+      .map(([mountKey, mountInfo]: [string, any]) => {
+        let resType = 'any'
+        const edgeType = mountInfo?.relation_model ?? 'Link'
+        usedEdgeTypes.add(edgeType)
+        if (mountInfo && mountInfo.pivot_type) {
+          if (mountInfo.is_resource) {
+            resType = mountInfo.info?.name ?? `${mountInfo.pivot_type}Resource`
+            // resource types are defined in same file, no node import needed
+          } else {
+            resType = mountInfo.pivot_type
+            referencedTypes.add(resType)
+          }
+        }
+        const arr = mountInfo?.is_array ? 'true' : 'false'
+        const arrEdges = 'true'
+        return `    ${mountKey}: { resource: ${resType}; edge: ${edgeType}; array: ${arr}; arrayEdges: ${arrEdges} }`
+      })
+      .join(',\n')
+
+    const additionalBlock = mountLines ? `{\n${mountLines}\n  }` : '{}'
+
+    const typeDef = `export type ${name} = Resource<${pivotType}, '${pivotKey}', ${additionalBlock}>`
+    resourceInterfaces.push(typeDef)
   }
 
       // Import from @malevichai/nova-ts package for base types and filters
@@ -100,7 +106,18 @@ export async function generateResources(schemaPath: string, outDir: string): Pro
     : ''
   const importLine = novaImport + nodesImport + '\n'
 
-  const resourcesContent = importLine + simplified
+  // Simple marker interfaces for link schemas and per-mount edges
+  const schemaLinkNames = extractLinkSchemas(data).map(({ name }) => name)
+  const schemaLinkInterfaces = schemaLinkNames
+    .map(name => `export interface ${name} extends Link {}`)
+    .join('\n')
+
+  const mountLinkInterfaces = Array.from(usedEdgeTypes)
+    .filter(t => t !== 'Link' && !schemaLinkNames.includes(t))
+    .map(t => `export interface ${t} extends Link {}`)
+    .join('\n')
+
+  const resourcesContent = importLine + schemaLinkInterfaces + '\n' + mountLinkInterfaces + '\n\n' + simplified
   writeFileSync(join(outDir, 'resources.ts'), resourcesContent, 'utf8')
 
   // 3. Base file - now just re-exports from @malevichai/nova-ts
@@ -356,4 +373,16 @@ function removeReferences(obj: any, referencedTypes: Set<string>): any {
   }
 
   return obj
+} 
+
+function extractLinkSchemas(data: any): Array<{ name: string; schema: any }> {
+  const out: Array<{ name: string; schema: any }> = []
+  if (data.components?.schemas) {
+    for (const [name, schema] of Object.entries(data.components.schemas)) {
+      if ((schema as any)._malevich_ogm_link) {
+        out.push({ name, schema })
+      }
+    }
+  }
+  return out
 } 

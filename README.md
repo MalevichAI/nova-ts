@@ -1,6 +1,40 @@
 # nova-ts
 
-TypeScript types and generator for Nova resources with OGM metadata.
+**Type-safe Neo4j OGM helpers, resource utilities and automatic schema-driven type generation for Nova API.**
+
+## Key Features
+
+- Generates complete node and resource TypeScript interfaces directly from your OpenAPI schema
+- Powerful filter/request type system with compile-time validation
+- Zero-config Nuxt 3 module – point it at your API url and it will autogenerate types on `nuxi dev` and `nuxi build`
+- Lightweight, dependency-free runtime helpers
+
+## Nuxt 3 Quick Start
+
+```bash
+# Install from GitHub Packages
+npm i @malevichai/nova-ts
+```
+
+`nuxt.config.ts`:
+
+```ts
+export default defineNuxtConfig({
+  modules: [
+    [
+      '@malevichai/nova-ts',
+      {
+        apiUrl: 'https://your/api/schema', // OpenAPI JSON url
+        outDir: 'types/generated'          // where to write nodes.ts / resources.ts / base.ts
+      }
+    ]
+  ]
+})
+```
+
+The module fetches the schema, writes the generated types, and registers the folder with Vite so your IDE picks it up instantly.
+
+---
 
 ## 🚀 Quick Start
 
@@ -32,11 +66,14 @@ import type {
   Resource
 } from '@malevichai/nova-ts'
 
-// Define your resource
-interface TaskResource extends Resource<Task, 'task'> {
-  task: Task
-  assigned_to?: ResourceEdge<User, Link> | null
-}
+// Generated resource type (from resources.ts)
+//                 Pivot type ▾  Pivot key ▾        Additional mounts ▾
+export type TaskResource = Resource<Task, 'task', {
+  // optional mounts example (uncomment if present in schema)
+  // assigned_to: { resource: User; edge: Link; array: false; arrayEdges: true }
+}>  
+
+// If your schema only contains the pivot field, the third generic can stay `{}` as above
 
 // Create type-safe requests
 const request: ResourceRequest<TaskResource, 'task'> = {
@@ -93,9 +130,33 @@ This generates:
 
 ### Core Types
 
-- `Resource<PivotType, PivotKey>` - Generic resource type
+- `Resource<PivotType, PivotKey, Additional>` - Generic resource type (auto-generated)
 - `ResourceEdge<S, T>` - Edge between resources
-- `Create<T>` / `Update<T>` - Mutation helpers
+- `ProxyResource<R>` – runtime-friendly representation using `$resource` / `$edges` wrappers
+- `CreateResource<R>` / `UpdateResource<R>` – payload shapes for mutations
+- `LinkResource<R>` / `UnlinkResource<R>` – edge operations
+- `Create<T>` / `Update<T>` – low-level node helpers
+
+#### Example
+
+```ts
+import type { ProxyResource, CreateResource, UpdateResource } from '@malevichai/nova-ts'
+import type { TaskResource } from '~/types/generated/resources'
+
+// Reading existing data
+type TaskProxy = ProxyResource<TaskResource>
+
+// Creating a new task
+const newTask: CreateResource<TaskResource> = {
+  task: { title: 'Write docs' }
+}
+
+// Updating a task
+const patch: UpdateResource<TaskResource> = {
+  task: { uid: 'task-123', title: 'Write better docs' }
+}
+```
+
 
 ### Filters
 

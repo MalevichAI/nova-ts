@@ -1,5 +1,7 @@
 // Test file to verify the generated types work correctly
-const fs = require('fs');
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+import fs from 'node:fs';
 
 // Test that we can import the module
 try {

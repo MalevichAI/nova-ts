@@ -2,9 +2,9 @@
   "name": "@malevichai/nova-ts",
   "version": "1.0.0",
   "description": "TypeScript types and generator for Nova resources with OGM metadata",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "type": "commonjs",
+  "main": "dist/module.js",
+  "types": "dist/module.d.ts",
+  "type": "module",
   "keywords": [
     "typescript",
     "openapi",
@@ -22,19 +22,20 @@
   ],
   "exports": {
     ".": {
+      "types": "./dist/module.d.ts",
+      "import": "./dist/module.js"
+    },
+    "./types": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.js"
+      "import": "./dist/index.js"
     },
     "./generator": {
       "types": "./dist/generator.d.ts",
-      "import": "./dist/generator.js",
-      "require": "./dist/generator.js"
+      "import": "./dist/generator.js"
     },
     "./resource-generator": {
       "types": "./dist/resourceGenerator.d.ts",
-      "import": "./dist/resourceGenerator.js",
-      "require": "./dist/resourceGenerator.js"
+      "import": "./dist/resourceGenerator.js"
     }
   },
   "bin": {
@@ -47,7 +48,8 @@
     "test:quick": "npm run build && node test/test-usage.js",
     "generate": "node dist/cli.js",
     "generate:resources": "node -e \"const { generateResources } = require('./dist/resourceGenerator'); generateResources(process.argv[1], process.argv[2])\"",
-    "prepublishOnly": "npm run build && npm test"
+    "prepublishOnly": "npm run build && npm test",
+    "dev": "nuxi dev playground"
   },
   "repository": {
     "type": "git",
@@ -64,10 +66,15 @@
   "homepage": "https://github.com/malevichai/nova-ts#readme",
   "dependencies": {
     "handlebars": "^4.7.8",
-    "json-schema-to-typescript": "^13.1.2"
+    "json-schema-to-typescript": "^13.1.2",
+    "@nuxt/kit": "^3.9.0"
+  },
+  "peerDependencies": {
+    "nuxt": "^3.0.0"
   },
   "devDependencies": {
     "typescript": "^5.4.5",
-    "@types/node": "^20.14.9"
+    "@types/node": "^20.14.9",
+    "nuxt": "^3.9.0"
   }
 }
