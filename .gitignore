@@ -50,3 +50,4 @@ test/*-output.*
 generated/
 *.py
 schema.json 
+.nuxt

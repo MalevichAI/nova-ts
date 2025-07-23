@@ -1,6 +1,6 @@
 {
   "name": "@malevichai/nova-ts",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "TypeScript types and generator for Nova resources with OGM metadata",
   "main": "dist/module.js",
   "types": "dist/module.d.ts",

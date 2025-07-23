@@ -3,7 +3,6 @@ import { generateResources } from './resourceGenerator.js'
 import { resolve } from 'node:path'
 import { mkdirSync, existsSync } from 'node:fs'
 
-export * from './index.js'
 export default defineNuxtModule({
   meta: {
     name: '@malevichai/nova-ts',

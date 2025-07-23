@@ -56,8 +56,8 @@ export interface Resource<
 > {}
 
 // CRUD helpers
-export type CreateNode<T extends Base> = Omit<T, 'uid' | 'created_at' | 'updated_at'> | { uid: string }
-export type UpdateNode<T extends Base> = Omit<T, 'uid' | 'created_at' | 'updated_at'> & { uid: string }
+export type CreateModel<T extends Base> = Omit<T, 'uid' | 'created_at' | 'updated_at'> | { uid: string }
+export type UpdateModel<T extends Base> = Omit<T, 'uid' | 'created_at' | 'updated_at'> & { uid: string }
 
 export type ProxyResource<R> = R extends Resource<infer P, infer PK, infer Add, any>
   ? { [K in PK]: P } & {
@@ -71,7 +71,7 @@ export type ProxyResource<R> = R extends Resource<infer P, infer PK, infer Add, 
   : never
 
 export type CreateResource<R> = R extends Resource<infer P, infer PK, infer Add, any>
-  ? { [K in PK]: CreateNode<P> } & {
+  ? { [K in PK]: CreateModel<P> } & {
       [K in keyof Add]: Mount<
         Add[K]['resource'] & { uid: string },
         Add[K]['edge'],
@@ -82,8 +82,16 @@ export type CreateResource<R> = R extends Resource<infer P, infer PK, infer Add,
   : never
 
 export type UpdateResource<R> = R extends Resource<infer P, infer PK, infer Add, any>
-  ? { [K in PK]: UpdateNode<P> }
-  : never
+  ? { [K in PK]: UpdateModel<P> } & {
+    [K in keyof Add]: (Add[K]['array'] extends true ? {
+      $resource: string,
+      $edges: UpdateModel<Add[K]['edge']>[]
+    }[] : {
+      $resource: string,
+      $edges: UpdateModel<Add[K]['edge']>[]
+    })
+  } : never
+
 
 export type DeleteResource<R> = R extends Resource<infer P, infer PK, infer Add, any>
   ? { [K in PK]: { uid: string } }
@@ -105,8 +113,8 @@ export type UnlinkResource<R> = R extends Resource<infer P, infer PK, infer Add,
   : never
 
 // Simple convenience wrappers matching previous API
-export type Create<T extends Base> = CreateNode<T>
-export type Update<T extends Base> = UpdateNode<T>
+export type Create<T extends Base> = CreateModel<T>
+export type Update<T extends Base> = UpdateModel<T>
 
 // === Helper constructors ===
 export function proxy<R>(value: ProxyResource<R>): ProxyResource<R> {
