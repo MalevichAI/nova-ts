@@ -1,133 +1,4 @@
-// Core resource types
-export interface ResourceEdge<S, T> {
-    $resource: S
-    $edges: T[]
-}
-
-export interface ResourceEdgePayload<T> {
-    $resource: string
-    $edges: T[]
-}
-
-// ================= Resource modelling =================
-
-// Generic helpers for mounted sub-resources
-interface MountedResource<S, T> {
-    $resource: S
-    $edges: T[]
-}
-
-interface MountedResourceSingleEdge<S, T> {
-    $resource: S
-    $edge: T
-}
-
-type SingleMountSingleEdge<S, T> = MountedResourceSingleEdge<S, T>
-type SingleMountMultipleEdges<S, T> = MountedResource<S, T>
-type ArrayMountSingleEdge<S, T> = MountedResourceSingleEdge<S, T>[]
-type ArrayMountMultipleEdges<S, T> = MountedResource<S, T>[]
-type Mounted<S, T> =
-  | MountedResource<S, T>
-  | MountedResourceSingleEdge<S, T>
-  | MountedResource<S, T>[]
-  | MountedResourceSingleEdge<S, T>[]
-
-type Mount<SR, SE, Arr extends boolean, ArrE extends boolean> = Arr extends true
-  ? ArrE extends true
-    ? ArrayMountMultipleEdges<SR, SE>
-    : ArrayMountSingleEdge<SR, SE>
-  : ArrE extends true
-  ? SingleMountMultipleEdges<SR, SE>
-  : SingleMountSingleEdge<SR, SE>
-
-// Base node properties (matches generated node types)
-export interface Base {
-    uid: string
-    created_at?: string | null
-    updated_at?: string | null
-}
-
-// Primary Resource marker – extra generics allow rich meta but remain nominal
-export interface Resource<
-  PivotType extends Base,
-  PivotKey extends string,
-  Additional extends Record<string, { resource: any; edge: any; array: boolean; arrayEdges: boolean }> = Record<string, { resource: any; edge: any; array: boolean; arrayEdges: boolean }>,
-  ResourceRouter extends string | null = null
-> {}
-
-// CRUD helpers
-export type CreateModel<T extends Base> = Omit<T, 'uid' | 'created_at' | 'updated_at'> | { uid: string }
-export type UpdateModel<T extends Base> = Omit<T, 'uid' | 'created_at' | 'updated_at'> & { uid: string }
-
-export type ProxyResource<R> = R extends Resource<infer P, infer PK, infer Add, any>
-  ? { [K in PK]: P } & {
-      [K in keyof Add]: Mount<
-        Add[K]['resource'],
-        Add[K]['edge'],
-        Add[K]['array'],
-        Add[K]['arrayEdges']
-      >
-    }
-  : never
-
-export type CreateResource<R> = R extends Resource<infer P, infer PK, infer Add, any>
-  ? { [K in PK]: CreateModel<P> } & {
-      [K in keyof Add]: Mount<
-        Add[K]['resource'] & { uid: string },
-        Add[K]['edge'],
-        Add[K]['array'],
-        Add[K]['arrayEdges']
-      >
-    }
-  : never
-
-export type UpdateResource<R> = R extends Resource<infer P, infer PK, infer Add, any>
-  ? { [K in PK]: UpdateModel<P> } & {
-    [K in keyof Add]: (Add[K]['array'] extends true ? {
-      $resource: string,
-      $edges: UpdateModel<Add[K]['edge']>[]
-    }[] : {
-      $resource: string,
-      $edges: UpdateModel<Add[K]['edge']>[]
-    })
-  } : never
-
-
-export type DeleteResource<R> = R extends Resource<infer P, infer PK, infer Add, any>
-  ? { [K in PK]: { uid: string } }
-  : never
-
-export type LinkResource<R> = R extends Resource<infer P, infer PK, infer Add, any>
-  ? { [K in PK]: { uid: string } } & {
-      [K in keyof Add]: {
-        $resource: { uid: string }
-        $edges: Add[K]['edge']
-      }
-    }
-  : never
-
-export type UnlinkResource<R> = R extends Resource<infer P, infer PK, infer Add, any>
-  ? { [K in PK]: { uid: string } } & {
-      [K in keyof Add]: { uid: string }[]
-    }
-  : never
-
-// Simple convenience wrappers matching previous API
-export type Create<T extends Base> = CreateModel<T>
-export type Update<T extends Base> = UpdateModel<T>
-
-// === Helper constructors ===
-export function proxy<R>(value: ProxyResource<R>): ProxyResource<R> {
-    return value
-}
-
-export function create<R>(value: CreateResource<R>): CreateResource<R> {
-    return value
-}
-
-export interface OnlyUID {
-    uid: string
-}
+import { ResourceEdge, Base, Create, Update, AbstractResource, MaterializedResource, CreateResource, UpdateResource, LinkResource, Mount, Link } from './types.js'
 
 // Operator types
 export type SupportedComparisonOps = '=' | '<' | '>' | '<=' | '>=' | '<>' | 'IN' | 'CONTAINS' | 'STARTS WITH' | 'ENDS WITH' | '=~'
@@ -202,11 +73,6 @@ export interface ResourceRequest<PivotType, PivotKey> {
     include_subresources?: string[]
     exclude_subresources?: string[]
     subresources?: Record<Exclude<keyof PivotType, PivotKey>, SubresourceRequest<PivotType[Exclude<keyof PivotType, PivotKey>], PivotKey>>
-}
-
-// Link type for edges
-export interface Link {
-    [key: string]: any
 } 
 
 export function isSubresourceFilter(f: AnyFilter | undefined): f is SubresourceFilter {
@@ -279,4 +145,21 @@ export function combine(...filters: AnyFilter[]): AnyFilter {
     
     return filters.reduce((acc, current) => merge(acc, current))
 }
+
+// Export new types from types.ts for compatibility
+export type {
+  ResourceEdge,
+  Base,
+  Create,
+  Update,
+  AbstractResource,
+  MaterializedResource,
+  CreateResource,
+  UpdateResource,
+  LinkResource,
+  UnlinkResource,
+  DeleteResource,
+  Mount,
+  Link
+} from './types.js'
     

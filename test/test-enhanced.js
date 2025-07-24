@@ -20,28 +20,28 @@ async function testEnhancedGeneration() {
     // Test specific improvements
     const tests = [
       {
-        name: 'ClientCompanyResource uses explicit pivot',
-        test: () => resourcesContent.includes('ClientCompanyResource extends Resource<ClientCompany, \'company\'>')
+        name: 'ClientCompanyResource uses interface syntax',
+        test: () => resourcesContent.includes('interface ClientCompanyResource extends AbstractResource<')
       },
       {
-        name: 'CaseResource uses explicit pivot',
-        test: () => resourcesContent.includes('CaseResource extends Resource<Case, \'case\'>')
+        name: 'CaseResource uses interface syntax',
+        test: () => resourcesContent.includes('interface CaseResource extends AbstractResource<')
       },
       {
-        name: 'CaseCategoryResource uses explicit pivot',
-        test: () => resourcesContent.includes('CaseCategoryResource extends Resource<CaseCategory, \'case_category\'>')
+        name: 'CaseCategoryResource uses interface syntax',
+        test: () => resourcesContent.includes('interface CaseCategoryResource extends AbstractResource<')
       },
       {
-        name: 'TicketChangeResource uses explicit pivot',
-        test: () => resourcesContent.includes('TicketChangeResource extends Resource<TicketChange, \'change\'>')
+        name: 'TicketChangeResource uses interface syntax',
+        test: () => resourcesContent.includes('interface TicketChangeResource extends AbstractResource<')
       },
       {
-        name: 'All resources extend Resource type',
+        name: 'All resources extend AbstractResource interface',
         test: () => {
           const resourceLines = resourcesContent.split('\n').filter(line => 
             line.includes('export interface') && line.includes('Resource')
           );
-          return resourceLines.every(line => line.includes('extends Resource<'));
+          return resourceLines.every(line => line.includes('extends AbstractResource<'));
         }
       }
     ];

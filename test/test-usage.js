@@ -40,10 +40,10 @@ try {
     
     // Read and verify content
     const resourcesContent = fs.readFileSync('./test/generated/resources.ts', 'utf8');
-    if (resourcesContent.includes('extends Resource<Task, \'task\'>')) {
-      console.log('✅ TaskResource properly extends Resource type');
+    if (resourcesContent.includes('interface TaskResource extends AbstractResource<')) {
+      console.log('✅ TaskResource properly extends AbstractResource interface');
     } else {
-      console.log('❌ TaskResource not properly extending Resource type');
+      console.log('❌ TaskResource not properly extending AbstractResource interface');
     }
     
     if (resourcesContent.includes('import type {') && resourcesContent.includes('} from \'@malevichai/nova-ts\'')) {

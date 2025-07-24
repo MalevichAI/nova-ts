@@ -132,7 +132,7 @@ This generates:
 
 - `Resource<PivotType, PivotKey, Additional>` - Generic resource type (auto-generated)
 - `ResourceEdge<S, T>` - Edge between resources
-- `ProxyResource<R>` – runtime-friendly representation using `$resource` / `$edges` wrappers
+- `MaterializedResource<R>` – runtime-friendly representation using `$resource` / `$edges` wrappers
 - `CreateResource<R>` / `UpdateResource<R>` – payload shapes for mutations
 - `LinkResource<R>` / `UnlinkResource<R>` – edge operations
 - `Create<T>` / `Update<T>` – low-level node helpers
@@ -140,11 +140,11 @@ This generates:
 #### Example
 
 ```ts
-import type { ProxyResource, CreateResource, UpdateResource } from '@malevichai/nova-ts'
+import type { MaterializedResource, CreateResource, UpdateResource } from '@malevichai/nova-ts'
 import type { TaskResource } from '~/types/generated/resources'
 
 // Reading existing data
-type TaskProxy = ProxyResource<TaskResource>
+type TaskProxy = MaterializedResource<TaskResource>
 
 // Creating a new task
 const newTask: CreateResource<TaskResource> = {

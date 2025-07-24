@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { generate as generateNodes } from './generator.js'
+import { compile } from 'json-schema-to-typescript'
 
 interface ResourceMeta {
   name?: string
@@ -21,21 +22,23 @@ export async function generateResources(schemaPath: string, outDir: string): Pro
     mkdirSync(outDir, { recursive: true })
   }
 
-  // 1. Nodes file (reuse existing generator)
+  // 1. Generate nodes.ts file using existing generator
   const nodesTs = await generateNodes(schemaPath)
   writeFileSync(join(outDir, 'nodes.ts'), nodesTs, 'utf8')
 
-  // 2. Collect resource schemas
+  // 2. Generate resources.ts file using new interface structure
   const resourceSchemas = extractResourceSchemas(data)
   const proxySchemas = resourceSchemas.filter(s => s.schema._resource?.type === 'proxy')
 
-  // Track referenced node types so we can generate proper imports later
+  // Track referenced node types for imports
   const referencedTypes = new Set<string>()
+  const usedLinkTypes = new Set<string>()
 
-  const resourceInterfaces: string[] = []
-  const usedEdgeTypes = new Set<string>()
+  // Generate AbstractResource interface definitions
+  const abstractResourceTypes: string[] = []
+
   for (const { name, schema } of proxySchemas) {
-    const meta = (schema._resource as any) || {}
+    const meta = schema._resource as any || {}
     const info = meta.info || {}
 
     const pivotType: string = info.pivot_type || mapResourceToNodeType(name, schema)
@@ -43,108 +46,173 @@ export async function generateResources(schemaPath: string, outDir: string): Pro
     referencedTypes.add(pivotType)
 
     const mounts = info.mounts ? Object.entries(info.mounts) : []
-    const mountLines = mounts
-      .map(([mountKey, mountInfo]: [string, any]) => {
-        let resType = 'any'
-        const edgeType = mountInfo?.relation_model ?? 'Link'
-        usedEdgeTypes.add(edgeType)
-        if (mountInfo && mountInfo.pivot_type) {
-          if (mountInfo.is_resource) {
-            resType = mountInfo.info?.name ?? `${mountInfo.pivot_type}Resource`
-            // resource types are defined in same file, no node import needed
-          } else {
-            resType = mountInfo.pivot_type
-            referencedTypes.add(resType)
-          }
+    
+    // Generate mount definitions
+    const mountDefinitions = mounts.map(([mountKey, mountInfo]: [string, any]) => {
+      let resourceType = 'any'
+      const linkType = mountInfo?.relation_model ?? 'Link'
+      usedLinkTypes.add(linkType)
+      
+      if (mountInfo && mountInfo.pivot_type) {
+        if (mountInfo.is_resource) {
+          // Reference to another resource
+          resourceType = mountInfo.info?.name ?? `${mountInfo.pivot_type}Resource`
+        } else {
+          // Reference to a node type
+          resourceType = mountInfo.pivot_type
+          referencedTypes.add(resourceType)
         }
-        const arr = mountInfo?.is_array ? 'true' : 'false'
-        const arrEdges = 'true'
-        return `    ${mountKey}: { resource: ${resType}; edge: ${edgeType}; array: ${arr}; arrayEdges: ${arrEdges} }`
-      })
-      .join(',\n')
+      }
+      
+      const isArray = mountInfo?.is_array ?? false
+      
+      return `    ${mountKey}: Mount<${resourceType}, ${linkType}, ${isArray}>`
+    })
 
-    const additionalBlock = mountLines ? `{\n${mountLines}\n  }` : '{}'
+    const mountsBlock = mountDefinitions.length > 0 
+      ? `{\n${mountDefinitions.join(',\n')}\n  }`
+      : '{}'
 
-    const typeDef = `export type ${name} = Resource<${pivotType}, '${pivotKey}', ${additionalBlock}>`
-    resourceInterfaces.push(typeDef)
+    const abstractTypeDef = `export interface ${name} extends AbstractResource<\n  '${pivotKey}',\n  ${pivotType},\n  ${mountsBlock}\n> {}`
+    abstractResourceTypes.push(abstractTypeDef)
   }
 
-      // Import from @malevichai/nova-ts package for base types and filters
-  const novaImport = `import type { 
-  ResourceEdge, 
-  ResourceEdgePayload, 
-  Link, 
-  Resource, 
-  Create, 
+  // Generate materialized resource types
+  const materializedResourceTypes = proxySchemas.map(({ name }) => 
+    `export type Materialized${name} = MaterializedResource<${name}>`
+  )
+
+  // Generate create/update/link resource types
+  const createResourceTypes = proxySchemas.map(({ name }) => 
+    `export type Create${name} = CreateResource<${name}>`
+  )
+
+  const updateResourceTypes = proxySchemas.map(({ name }) => 
+    `export type Update${name} = UpdateResource<${name}>`
+  )
+
+  const linkResourceTypes = proxySchemas.map(({ name }) => 
+    `export type Link${name} = LinkResource<${name}>`
+  )
+
+  // Import base types from @malevichai/nova-ts package
+  const baseImports = `import type {
+  ResourceEdge,
+  Base,
+  Create,
   Update,
-  ResourceRequest,
-  SubresourceRequest,
-  FilterBase,
-  NoFilter,
-  Match,
-  MatchEdge,
-  Join,
-  Exists,
-  SubresourceFilter,
-  ResourceFilter,
-  AnyFilter,
-  SupportedComparisonOps,
-  SupportedLogicalOps
-} from '@malevichai/nova-ts'\n`
+  AbstractResource,
+  MaterializedResource,
+  CreateResource,
+  UpdateResource,
+  LinkResource,
+  Mount,
+  Link
+} from '@malevichai/nova-ts'`
 
-  // Replace verbose ResourceEdge_* types with generic ResourceEdge<S, Link>
-  const simplified = resourceInterfaces.join('\n\n')
-
+  // Import node types from nodes.ts
   const nodeTypeNames = Array.from(referencedTypes).filter(t => 
     t !== 'Link' && 
     !t.startsWith('ResourceEdge_') && 
     !t.endsWith('Resource') &&
-    t !== 'ClientCompanyInfo'  // This is a resource schema, not a node
+    t !== 'ClientCompanyInfo'
   )
-  const nodesImport = nodeTypeNames.length
-    ? `import type { ${nodeTypeNames.sort().join(', ')} } from './nodes'\n`
+  
+  const nodesImport = nodeTypeNames.length > 0
+    ? `import type { ${nodeTypeNames.sort().join(', ')} } from './nodes'`
     : ''
-  const importLine = novaImport + nodesImport + '\n'
 
-  // Simple marker interfaces for link schemas and per-mount edges
-  const schemaLinkNames = extractLinkSchemas(data).map(({ name }) => name)
-  const schemaLinkInterfaces = schemaLinkNames
-    .map(name => `export interface ${name} extends Link {}`)
-    .join('\n')
+  // Generate link type definitions
+  const linkSchemas = extractLinkSchemas(data)
+  const schemaLinkTypes = await Promise.all(
+    linkSchemas.map(async ({ name, schema }) => {
+      // Use the node generator to create proper interfaces for link schemas
+      let cleanSchema = { ...schema }
+      
+      // If _node_schema exists, use it as the base schema
+      if (schema._node_schema) {
+        cleanSchema = { ...schema._node_schema }
+      }
+      
+      // Remove OGM metadata
+      delete cleanSchema._malevich_ogm_link
+      delete cleanSchema._node_schema
+      delete cleanSchema._node_name
+      delete cleanSchema.$defs
+      
+      // Remove references to avoid external dependencies
+      cleanSchema = removeReferences(cleanSchema)
+      
+      // Generate the interface using json-schema-to-typescript
+      let interfaceCode = await compile(cleanSchema, name, {
+        bannerComment: '',
+        style: {
+          singleQuote: true,
+          semi: false
+        }
+      })
+      
+      // Clean up the generated code and fix required fields
+      interfaceCode = interfaceCode
+        .replace(/uid\?\s*:\s*string/g, 'uid: string')
+        .replace(/created_at\?\s*:\s*string \| null/g, 'created_at?: string | null')
+        .replace(/updated_at\?\s*:\s*string \| null/g, 'updated_at?: string | null')
+      
+      // Replace type alias references with direct types
+      interfaceCode = interfaceCode
+        .replace(/: CreatedAt/g, ': string | null')
+        .replace(/: UpdatedAt/g, ': string | null') 
+        .replace(/: Uid/g, ': string')
+        .replace(/: [A-Z][a-zA-Z]*(?![a-z])/g, ': string')
+        .replace(/uid\?\s*:/g, 'uid:')
+      
+      // Remove type aliases and keep only the interface
+      const lines = interfaceCode.split('\n')
+      const interfaceStart = lines.findIndex(line => line.startsWith('export interface'))
+      if (interfaceStart !== -1) {
+        return lines.slice(interfaceStart).join('\n')
+      }
+      
+      return interfaceCode
+    })
+  )
 
-  const mountLinkInterfaces = Array.from(usedEdgeTypes)
-    .filter(t => t !== 'Link' && !schemaLinkNames.includes(t))
-    .map(t => `export interface ${t} extends Link {}`)
-    .join('\n')
+  const mountLinkTypes = Array.from(usedLinkTypes)
+    .filter(t => t !== 'Link' && !linkSchemas.some(l => l.name === t))
+    .map(t => `export interface ${t} extends Base {}`)
 
-  const resourcesContent = importLine + schemaLinkInterfaces + '\n' + mountLinkInterfaces + '\n\n' + simplified
+  // Combine all parts
+  const allImports = [baseImports, nodesImport].filter(Boolean).join('\n')
+  const allLinkTypes = [...schemaLinkTypes, ...mountLinkTypes].join('\n\n')
+  const allAbstractTypes = abstractResourceTypes.join('\n\n')
+  const allMaterializedTypes = materializedResourceTypes.join('\n')
+  const allCreateTypes = createResourceTypes.join('\n')
+  const allUpdateTypes = updateResourceTypes.join('\n')
+  const allLinkResourceTypes = linkResourceTypes.join('\n')
+
+  const resourcesContent = [
+    allImports,
+    '',
+    '// Link types',
+    allLinkTypes,
+    '',
+    '// Abstract resource interfaces',
+    allAbstractTypes,
+    '',
+    '// Materialized resource types',
+    allMaterializedTypes,
+    '',
+    '// Create resource types',
+    allCreateTypes,
+    '',
+    '// Update resource types', 
+    allUpdateTypes,
+    '',
+    '// Link resource types',
+    allLinkResourceTypes
+  ].join('\n')
+
   writeFileSync(join(outDir, 'resources.ts'), resourcesContent, 'utf8')
-
-  // 3. Base file - now just re-exports from @malevichai/nova-ts
-  const baseContent = `// Re-export base types from @malevichai/nova-ts package
-export type { 
-  ResourceEdge, 
-  ResourceEdgePayload, 
-  Link, 
-  Resource, 
-  Create, 
-  Update,
-  ResourceRequest,
-  SubresourceRequest,
-  FilterBase,
-  NoFilter,
-  Match,
-  MatchEdge,
-  Join,
-  Exists,
-  SubresourceFilter,
-  ResourceFilter,
-  AnyFilter,
-  SupportedComparisonOps,
-  SupportedLogicalOps
-} from '@malevichai/nova-ts'
-`
-  writeFileSync(join(outDir, 'base.ts'), baseContent, 'utf8')
 }
 
 function extractResourceSchemas(data: any): Array<{ name: string; schema: SchemaWithResource }> {
@@ -153,6 +221,18 @@ function extractResourceSchemas(data: any): Array<{ name: string; schema: Schema
     for (const [name, schema] of Object.entries(data.components.schemas)) {
       if ((schema as any)._resource) {
         out.push({ name, schema: schema as SchemaWithResource })
+      }
+    }
+  }
+  return out
+}
+
+function extractLinkSchemas(data: any): Array<{ name: string; schema: any }> {
+  const out: Array<{ name: string; schema: any }> = []
+  if (data.components?.schemas) {
+    for (const [name, schema] of Object.entries(data.components.schemas)) {
+      if ((schema as any)._malevich_ogm_link) {
+        out.push({ name, schema })
       }
     }
   }
@@ -250,139 +330,25 @@ function mapResourceToNodeType(resourceName: string, schema?: any): string {
   return resourceName
 }
 
-// fallback remove refs if util not present
-function removeReferences(obj: any, referencedTypes: Set<string>): any {
+function removeReferences(obj: any): any {
+  if (Array.isArray(obj)) {
+    return obj.map(removeReferences)
+  }
+  
   if (obj && typeof obj === 'object') {
-    // Handle anyOf with array and null (like changes?: Changes | null)
-    if (obj.anyOf && Array.isArray(obj.anyOf)) {
-      const arrayVariant = obj.anyOf.find((variant: any) => 
-        variant.type === 'array' && variant.items && variant.items.$ref
-      )
-      if (arrayVariant) {
-        const ref: string = arrayVariant.items.$ref
-        const arrMatch = ref.match(/#\/components\/schemas\/ResourceEdge_(\w+)_Link_/)
-        if (arrMatch) {
-          const origin = arrMatch[1]
-          // Handle special cases where Resource suffix should be dropped
-          const nodeType = mapResourceToNodeType(origin)
-          referencedTypes.add(nodeType)
-          return { tsType: `ResourceEdge<${nodeType}, Link>[] | null` }
-        }
-        
-        // Also handle ControlLink variants
-        const controlArrMatch = ref.match(/#\/components\/schemas\/ResourceEdge_(\w+)_ControlLink_/)
-        if (controlArrMatch) {
-          const origin = controlArrMatch[1]
-          const nodeType = mapResourceToNodeType(origin)
-          referencedTypes.add(nodeType)
-          return { tsType: `ResourceEdge<${nodeType}, Link>[] | null` }
-        }
-        
-        // Handle any other ResourceEdge patterns (like ChannelToContact, TicketSubtask, etc.)
-        const generalArrMatch = ref.match(/#\/components\/schemas\/ResourceEdge_(\w+)_(\w+)_/)
-        if (generalArrMatch) {
-          const origin = generalArrMatch[1]
-          const nodeType = mapResourceToNodeType(origin)
-          referencedTypes.add(nodeType)
-          return { tsType: `ResourceEdge<${nodeType}, Link>[] | null` }
-        }
-      }
+    if (obj.$ref) {
+      // Replace $ref with a generic type
+      return { type: 'string', description: 'Reference to external schema' }
     }
-
-    // Handle arrays of ResourceEdge_* links (direct array case)
-    if (obj.type === 'array' && obj.items && typeof obj.items === 'object' && obj.items.$ref) {
-      const ref: string = obj.items.$ref
-      const arrMatch = ref.match(/#\/components\/schemas\/ResourceEdge_(\w+)_Link_/)
-      if (arrMatch) {
-        const origin = arrMatch[1]
-        const nodeType = mapResourceToNodeType(origin)
-        referencedTypes.add(nodeType)
-        return { tsType: `ResourceEdge<${nodeType}, Link>[]` }
-      }
-      
-      // Also handle ControlLink variants
-      const controlArrMatch = ref.match(/#\/components\/schemas\/ResourceEdge_(\w+)_ControlLink_/)
-      if (controlArrMatch) {
-        const origin = controlArrMatch[1]
-        const nodeType = mapResourceToNodeType(origin)
-        referencedTypes.add(nodeType)
-        return { tsType: `ResourceEdge<${nodeType}, Link>[]` }
-      }
-      
-      // Handle any other ResourceEdge patterns (like ChannelToContact, TicketSubtask, etc.)
-      const generalArrMatch = ref.match(/#\/components\/schemas\/ResourceEdge_(\w+)_(\w+)_/)
-      if (generalArrMatch) {
-        const origin = generalArrMatch[1]
-        const nodeType = mapResourceToNodeType(origin)
-        referencedTypes.add(nodeType)
-        return { tsType: `ResourceEdge<${nodeType}, Link>[]` }
-      }
-    }
-
-    // Handle single ResourceEdge_* references
-    if (obj.$ref && typeof obj.$ref === 'string') {
-      const ref: string = obj.$ref
-      const match = ref.match(/#\/components\/schemas\/(\w+)/)
-      if (match) {
-        const schemaName = match[1]
-        
-        // Handle ResourceEdge_X_Y_ patterns
-        const edgeMatch = schemaName.match(/^ResourceEdge_(\w+)_Link_$/)
-        if (edgeMatch) {
-          const origin = edgeMatch[1]
-          const nodeType = mapResourceToNodeType(origin)
-          referencedTypes.add(nodeType)
-          return { tsType: `ResourceEdge<${nodeType}, Link>` }
-        }
-        
-        // Handle ResourceEdge_X_ControlLink_ patterns
-        const controlEdgeMatch = schemaName.match(/^ResourceEdge_(\w+)_ControlLink_$/)
-        if (controlEdgeMatch) {
-          const origin = controlEdgeMatch[1]
-          const nodeType = mapResourceToNodeType(origin)
-          referencedTypes.add(nodeType)
-          return { tsType: `ResourceEdge<${nodeType}, Link>` }
-        }
-        
-        // Handle any other ResourceEdge patterns (like ChannelToContact, TicketSubtask, etc.)
-        const generalEdgeMatch = schemaName.match(/^ResourceEdge_(\w+)_(\w+)_$/)
-        if (generalEdgeMatch) {
-          const origin = generalEdgeMatch[1]
-          const nodeType = mapResourceToNodeType(origin)
-          referencedTypes.add(nodeType)
-          return { tsType: `ResourceEdge<${nodeType}, Link>` }
-        }
-        
-        // Handle regular node references (but exclude ClientCompanyInfo which is a resource, not a node)
-        if (!schemaName.endsWith('Resource') && schemaName !== 'ClientCompanyInfo') {
-          referencedTypes.add(schemaName)
-          return { tsType: schemaName }
-        }
-      }
-      
-      // For everything else, strip the reference
-      return { type: 'string' }
-    }
-
-    // Recursively process object properties
-    const result: any = Array.isArray(obj) ? [] : {}
+    
+    const result: any = {}
     for (const [key, value] of Object.entries(obj)) {
-      result[key] = removeReferences(value, referencedTypes)
+      if (key !== '$ref') {
+        result[key] = removeReferences(value)
+      }
     }
     return result
   }
-
+  
   return obj
-} 
-
-function extractLinkSchemas(data: any): Array<{ name: string; schema: any }> {
-  const out: Array<{ name: string; schema: any }> = []
-  if (data.components?.schemas) {
-    for (const [name, schema] of Object.entries(data.components.schemas)) {
-      if ((schema as any)._malevich_ogm_link) {
-        out.push({ name, schema })
-      }
-    }
-  }
-  return out
 } 

@@ -81,7 +81,9 @@ export async function generate(sourcePath: string): Promise<string> {
   const deduped = deduplicateTypes(nodeTypes.join('\n\n'))
   const inlined = inlineAliasTypes(deduped)
   // Make uid required and always string
-  const finalOutput = inlined.replace(/uid\?\s*:\s*string/g, 'uid: string')
+  let finalOutput = inlined.replace(/uid\?\s*:\s*string/g, 'uid: string')
+  // Fix invalid type alias syntax where enum values are used as type names
+  finalOutput = fixInvalidTypeAliases(finalOutput)
   return finalOutput
 }
 
@@ -158,6 +160,39 @@ function deduplicateTypes(typescript: string): string {
   result.push(...nonCommonLines)
   
   return result.join('\n').replace(/\n{3,}/g, '\n\n')
+}
+
+function fixInvalidTypeAliases(ts: string): string {
+  // Fix invalid type alias syntax like: export type 'tunneled' | 'agent' = ...
+  // This happens when json-schema-to-typescript tries to create a type alias from enum values
+  const lines = ts.split('\n')
+  const fixedLines: string[] = []
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    
+    // Match invalid type alias patterns
+    const invalidAliasMatch = line.match(/^export type '([^']+)'\s*\|\s*'([^']+)'\s*=\s*$/)
+    if (invalidAliasMatch) {
+      // Skip this invalid line and the following union type lines
+      let j = i + 1
+      const unionLines = []
+      while (j < lines.length && (lines[j].trim().startsWith('|') || lines[j].trim() === '')) {
+        if (lines[j].trim().startsWith('|')) {
+          unionLines.push(lines[j].trim())
+        }
+        j++
+      }
+      
+      // Skip the invalid type alias entirely - these are usually duplicated properly elsewhere
+      i = j - 1
+      continue
+    }
+    
+    fixedLines.push(line)
+  }
+  
+  return fixedLines.join('\n')
 }
 
 function inlineAliasTypes(ts: string): string {

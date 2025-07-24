@@ -5,7 +5,9 @@ import type {
   Match, 
   ResourceEdge,
   Link,
-  Resource
+  AbstractResource,
+  MaterializedResource,
+  Mount
 } from '../src/index'
 
 // Import generated node types
@@ -27,10 +29,11 @@ interface Task {
 }
 
 // Define TaskResource locally for testing
-interface TaskResource extends Resource<Task, 'task'> {
-  task: Task
-  assigned_to?: ResourceEdge<User, Link> | null
-}
+interface TaskResourceAbstract extends AbstractResource<'task', Task, {
+  assigned_to: Mount<User, Link, false>
+}> {}
+
+type TaskResource = MaterializedResource<TaskResourceAbstract>
 
 // Test type-safe resource request
 const taskRequest: ResourceRequest<TaskResource, 'task'> = {
