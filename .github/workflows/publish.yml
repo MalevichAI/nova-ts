@@ -35,7 +35,15 @@ jobs:
     - name: Update version from release tag
       run: |
         VERSION=${GITHUB_REF#refs/tags/v}
-        npm version $VERSION --no-git-tag-version
+        CURRENT_VERSION=$(node -p "require('./package.json').version")
+        echo "Tag version: $VERSION"
+        echo "Current version: $CURRENT_VERSION"
+        if [ "$VERSION" != "$CURRENT_VERSION" ]; then
+          npm version $VERSION --no-git-tag-version
+          echo "Updated package.json version to: $VERSION"
+        else
+          echo "Version already matches tag, no update needed"
+        fi
         echo "Publishing version: $VERSION to GitHub Packages"
 
     - name: Publish to GitHub Packages
