@@ -1,286 +1,299 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
+import { writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { generate as generateNodes } from './generator.js'
-import { compile } from 'json-schema-to-typescript'
+import { getSchema } from './schemaLoader.js'
+import { cleanupSchema, isOgmLink } from './ogmHelpers.js'
 
 interface ResourceMeta {
   name?: string
   type: 'proxy' | 'create' | 'update' | 'link'
-  info?: any
+  info?: {
+    pivot_type?: string
+    pivot_key?: string
+    mounts?: Record<string, {
+      pivot_type?: string
+      pivot_key?: string
+      is_resource?: boolean
+      is_array?: boolean
+      relation_model?: string
+      info?: { name?: string }
+    }>
+  }
 }
 
-interface SchemaWithResource {
-  _resource?: ResourceMeta
-  [k: string]: any
+interface ResourceSchema {
+  name: string
+  schema: any
+  meta: ResourceMeta
 }
 
-export async function generateResources(schemaPath: string, outDir: string): Promise<void> {
-  const source = readFileSync(schemaPath, 'utf8')
-  const data = JSON.parse(source)
+// Convert JSON schema property to TypeScript type string (same as in generator.ts)
+function jsonSchemaToTsType(prop: any, allSchemas: Record<string, any>): string {
+  if (!prop) return 'any'
+  
+  // Handle $ref
+  if (prop.$ref) {
+    const refName = prop.$ref.replace('#/components/schemas/', '')
+    const sanitized = sanitizeName(refName)
+    
+    // Skip ResourceEdge types - use generic instead
+    if (sanitized.startsWith('ResourceEdge_')) {
+      return 'ResourceEdge<any, any>'
+    }
+    
+    // Check if it's an OGM type that we'll generate
+    const referencedSchema = allSchemas[refName]
+    if (referencedSchema && (isOgmNode(referencedSchema) || isOgmLink(referencedSchema))) {
+      return sanitized
+    }
+    
+    // For non-OGM schemas, inline if simple
+    if (referencedSchema) {
+      return jsonSchemaToTsType(referencedSchema, allSchemas)
+    }
+    
+    return 'any'
+  }
+  
+  // Handle anyOf (union types)
+  if (prop.anyOf) {
+    const types = prop.anyOf
+      .map((item: any) => jsonSchemaToTsType(item, allSchemas))
+      .filter((type: string) => type !== 'null')
+    
+    const hasNull = prop.anyOf.some((item: any) => item.type === 'null')
+    const uniqueTypes = [...new Set(types)]
+    
+    if (uniqueTypes.length === 0) return 'any'
+    if (uniqueTypes.length === 1) {
+      const singleType = uniqueTypes[0] as string
+      return hasNull ? `${singleType} | null` : singleType
+    }
+    
+    const unionType = uniqueTypes.join(' | ')
+    return hasNull ? `${unionType} | null` : unionType
+  }
+  
+  // Handle allOf
+  if (prop.allOf) {
+    // For now, just use the first schema
+    return jsonSchemaToTsType(prop.allOf[0], allSchemas)
+  }
+  
+  // Handle oneOf
+  if (prop.oneOf) {
+    const types = prop.oneOf.map((item: any) => jsonSchemaToTsType(item, allSchemas))
+    return [...new Set(types)].join(' | ')
+  }
+  
+  // Handle arrays
+  if (prop.type === 'array') {
+    if (prop.items) {
+      const itemType = jsonSchemaToTsType(prop.items, allSchemas)
+      return `${itemType}[]`
+    }
+    return 'any[]'
+  }
+  
+  // Handle objects
+  if (prop.type === 'object') {
+    return 'any' // For now, inline object types as any
+  }
+  
+  // Handle enums
+  if (prop.enum) {
+    const enumValues = prop.enum.map((val: any) => typeof val === 'string' ? `"${val}"` : val)
+    return enumValues.join(' | ')
+  }
+  
+  // Handle basic types
+  switch (prop.type) {
+    case 'string': return 'string'
+    case 'number': return 'number'
+    case 'integer': return 'number'
+    case 'boolean': return 'boolean'
+    case 'null': return 'null'
+    default: return 'any'
+  }
+}
+
+function sanitizeName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_]/g, '_')
+}
+
+function isOgmNode(schema: any): boolean {
+  return !!(schema?._malevich_ogm_node || schema?._node_schema?._malevich_ogm_node)
+}
+
+// Generate TypeScript interface from link schema
+function generateLinkInterface(name: string, schema: any, allSchemas: Record<string, any>): string {
+  const sanitized = sanitizeName(name)
+  
+  let interfaceBody = ''
+  const properties = schema.properties || {}
+  const required = new Set(schema.required || [])
+  
+  // Skip inherited properties from Link base interface
+  const skipProps = new Set(['uid', 'created_at', 'updated_at'])
+  
+  for (const [propName, propSchema] of Object.entries(properties)) {
+    if (skipProps.has(propName)) continue
+    
+    const propType = jsonSchemaToTsType(propSchema, allSchemas)
+    const isOptional = !required.has(propName)
+    const optionalMark = isOptional ? '?' : ''
+    
+    interfaceBody += `  ${propName}${optionalMark}: ${propType}\n`
+  }
+  
+  // Add index signature only if explicitly set and interface has other fields
+  if (schema.additionalProperties === true && interfaceBody.length > 0) {
+    interfaceBody += '  [k: string]: any\n'
+  }
+  
+  // If no properties after filtering, just create empty extending interface
+  if (interfaceBody.length === 0) {
+    return `export interface ${sanitized} extends Link {}\n\n`
+  }
+  
+  return `export interface ${sanitized} extends Link {\n${interfaceBody}}\n\n`
+}
+
+export async function generateResources(source: string | object, outDir: string): Promise<void> {
+  const data = await getSchema(source) as any
 
   if (!existsSync(outDir)) {
     mkdirSync(outDir, { recursive: true })
   }
 
-  // 1. Generate nodes.ts file using existing generator
-  const nodesTs = await generateNodes(schemaPath)
+  const nodesTs = await generateNodes(data)
   writeFileSync(join(outDir, 'nodes.ts'), nodesTs, 'utf8')
 
-  // 2. Generate resources.ts file using new interface structure
   const resourceSchemas = extractResourceSchemas(data)
-  const proxySchemas = resourceSchemas.filter(s => s.schema._resource?.type === 'proxy')
+  const linkSchemas = extractLinkSchemas(data)
+  const proxyResources = resourceSchemas.filter(r => r.meta.type === 'proxy')
 
-  // Track referenced node types for imports
+  if (proxyResources.length === 0) {
+    console.warn('No proxy resources found in schema')
+    return
+  }
+
+  const { abstractTypes, referencedTypes, usedLinkTypes } = generateAbstractResources(proxyResources)
+  const linkTypes = await generateLinkTypes(linkSchemas, usedLinkTypes, data.components?.schemas || {})
+
+  const imports = [
+    'import type {',
+    '  ResourceEdge,',
+    '  Base,',
+    '  Create,',
+    '  Update,',
+    '  AbstractResource,',
+    '  MaterializedResource,',
+    '  CreateResource,',
+    '  UpdateResource,',
+    '  LinkResource,',
+    '  Mount,',
+    '  Link',
+    "} from '@malevichai/nova-ts'",
+    `import type { ${Array.from(referencedTypes).join(', ')} } from './nodes'`,
+    ''
+  ].join('\n')
+
+  const output = [
+    imports,
+    linkTypes,
+    abstractTypes.join('\n\n')
+  ].join('\n\n')
+
+  writeFileSync(join(outDir, 'resources.ts'), output, 'utf8')
+  console.log(`✅ Generated resources to ${join(outDir, 'resources.ts')}`)
+}
+
+function generateAbstractResources(resources: ResourceSchema[]): {
+  abstractTypes: string[]
+  referencedTypes: Set<string>
+  usedLinkTypes: Set<string>
+} {
+  const abstractTypes: string[] = []
   const referencedTypes = new Set<string>()
   const usedLinkTypes = new Set<string>()
 
-  // Generate AbstractResource interface definitions
-  const abstractResourceTypes: string[] = []
-
-  for (const { name, schema } of proxySchemas) {
-    const meta = schema._resource as any || {}
-    const info = meta.info || {}
-
-    const pivotType: string = info.pivot_type || mapResourceToNodeType(name, schema)
-    const pivotKey: string = info.pivot_key || findPivotField(schema, pivotType) || 'uid'
+  for (const resource of resources) {
+    const { pivotKey, pivotType, mounts } = extractResourceMetadata(resource)
+    
     referencedTypes.add(pivotType)
 
-    const mounts = info.mounts ? Object.entries(info.mounts) : []
-    
-    // Generate mount definitions
-    const mountDefinitions = mounts.map(([mountKey, mountInfo]: [string, any]) => {
-      let resourceType = 'any'
-      const linkType = mountInfo?.relation_model ?? 'Link'
-      usedLinkTypes.add(linkType)
+    const mountDefs: string[] = []
+    for (const [mountName, mountInfo] of Object.entries(mounts)) {
+      const mountType = mountInfo.pivot_type || 'any'
+      const linkType = mountInfo.relation_model || 'Link'
+      const isArray = mountInfo.is_array ? 'true' : 'false'
       
-      if (mountInfo && mountInfo.pivot_type) {
-        if (mountInfo.is_resource) {
-          // Reference to another resource
-          resourceType = mountInfo.info?.name ?? `${mountInfo.pivot_type}Resource`
-        } else {
-          // Reference to a node type
-          resourceType = mountInfo.pivot_type
-          referencedTypes.add(resourceType)
-        }
+      if (mountType !== 'any') {
+        referencedTypes.add(mountType)
       }
       
-      const isArray = mountInfo?.is_array ?? false
-      
-      return `    ${mountKey}: Mount<${resourceType}, ${linkType}, ${isArray}>`
-    })
+      if (mountInfo.relation_model) {
+        usedLinkTypes.add(mountInfo.relation_model)
+      }
 
-    const mountsBlock = mountDefinitions.length > 0 
-      ? `{\n${mountDefinitions.join(',\n')}\n  }`
+      mountDefs.push(`    ${mountName}: Mount<${mountType}, ${linkType}, ${isArray}>`)
+    }
+
+    const mountsBlock = mountDefs.length > 0
+      ? `{\n${mountDefs.join(',\n')}\n  }`
       : '{}'
 
-    const abstractTypeDef = `export interface ${name} extends AbstractResource<\n  '${pivotKey}',\n  ${pivotType},\n  ${mountsBlock}\n> {}`
-    abstractResourceTypes.push(abstractTypeDef)
+    abstractTypes.push(
+      `export interface ${resource.name} extends AbstractResource<\n  '${pivotKey}',\n  ${pivotType},\n  ${mountsBlock}\n> {}`
+    )
   }
 
-  // Generate materialized resource types
-  const materializedResourceTypes = proxySchemas.map(({ name }) => 
-    `export type Materialized${name} = MaterializedResource<${name}>`
-  )
+  return { abstractTypes, referencedTypes, usedLinkTypes }
+}
 
-  // Generate create/update/link resource types
-  const createResourceTypes = proxySchemas.map(({ name }) => 
-    `export type Create${name} = CreateResource<${name}>`
-  )
-
-  const updateResourceTypes = proxySchemas.map(({ name }) => 
-    `export type Update${name} = UpdateResource<${name}>`
-  )
-
-  const linkResourceTypes = proxySchemas.map(({ name }) => 
-    `export type Link${name} = LinkResource<${name}>`
-  )
-
-  // Import base types from @malevichai/nova-ts package
-  const baseImports = `import type {
-  ResourceEdge,
-  Base,
-  Create,
-  Update,
-  AbstractResource,
-  MaterializedResource,
-  CreateResource,
-  UpdateResource,
-  LinkResource,
-  Mount,
-  Link
-} from '@malevichai/nova-ts'`
-
-  // Import node types from nodes.ts
-  const nodeTypeNames = Array.from(referencedTypes).filter(t => 
-    t !== 'Link' && 
-    !t.startsWith('ResourceEdge_') && 
-    !t.endsWith('Resource') &&
-    t !== 'ClientCompanyInfo'
-  )
+function extractResourceMetadata(resource: ResourceSchema): {
+  pivotKey: string
+  pivotType: string
+  mounts: Record<string, any>
+} {
+  const info = resource.meta.info || {}
   
-  const nodesImport = nodeTypeNames.length > 0
-    ? `import type { ${nodeTypeNames.sort().join(', ')} } from './nodes'`
-    : ''
+  const pivotType = info.pivot_type || inferPivotType(resource.name)
+  const pivotKey = info.pivot_key || inferPivotKey(resource.schema, pivotType) || 'uid'
+  const mounts = info.mounts || {}
 
-  // Generate link type definitions
-  const linkSchemas = extractLinkSchemas(data)
-  const schemaLinkTypes = await Promise.all(
-    linkSchemas.map(async ({ name, schema }) => {
-      // Use the node generator to create proper interfaces for link schemas
-      let cleanSchema = { ...schema }
-      
-      // If _node_schema exists, use it as the base schema
-      if (schema._node_schema) {
-        cleanSchema = { ...schema._node_schema }
-      }
-      
-      // Remove OGM metadata
-      delete cleanSchema._malevich_ogm_link
-      delete cleanSchema._node_schema
-      delete cleanSchema._node_name
-      delete cleanSchema.$defs
-      
-      // Remove references to avoid external dependencies
-      cleanSchema = removeReferences(cleanSchema)
-      
-      // Generate the interface using json-schema-to-typescript
-      let interfaceCode = await compile(cleanSchema, name, {
-        bannerComment: '',
-        style: {
-          singleQuote: true,
-          semi: false
-        }
-      })
-      
-      // Clean up the generated code and fix required fields
-      interfaceCode = interfaceCode
-        .replace(/uid\?\s*:\s*string/g, 'uid: string')
-        .replace(/created_at\?\s*:\s*string \| null/g, 'created_at?: string | null')
-        .replace(/updated_at\?\s*:\s*string \| null/g, 'updated_at?: string | null')
-      
-      // Replace type alias references with direct types
-      interfaceCode = interfaceCode
-        .replace(/: CreatedAt/g, ': string | null')
-        .replace(/: UpdatedAt/g, ': string | null') 
-        .replace(/: Uid/g, ': string')
-        .replace(/: [A-Z][a-zA-Z]*(?![a-z])/g, ': string')
-        .replace(/uid\?\s*:/g, 'uid:')
-      
-      // Remove type aliases and keep only the interface
-      const lines = interfaceCode.split('\n')
-      const interfaceStart = lines.findIndex(line => line.startsWith('export interface'))
-      if (interfaceStart !== -1) {
-        return lines.slice(interfaceStart).join('\n')
-      }
-      
-      return interfaceCode
-    })
-  )
-
-  const mountLinkTypes = Array.from(usedLinkTypes)
-    .filter(t => t !== 'Link' && !linkSchemas.some(l => l.name === t))
-    .map(t => `export interface ${t} extends Base {}`)
-
-  // Combine all parts
-  const allImports = [baseImports, nodesImport].filter(Boolean).join('\n')
-  const allLinkTypes = [...schemaLinkTypes, ...mountLinkTypes].join('\n\n')
-  const allAbstractTypes = abstractResourceTypes.join('\n\n')
-  const allMaterializedTypes = materializedResourceTypes.join('\n')
-  const allCreateTypes = createResourceTypes.join('\n')
-  const allUpdateTypes = updateResourceTypes.join('\n')
-  const allLinkResourceTypes = linkResourceTypes.join('\n')
-
-  const resourcesContent = [
-    allImports,
-    '',
-    '// Link types',
-    allLinkTypes,
-    '',
-    '// Abstract resource interfaces',
-    allAbstractTypes,
-    '',
-    '// Materialized resource types',
-    allMaterializedTypes,
-    '',
-    '// Create resource types',
-    allCreateTypes,
-    '',
-    '// Update resource types', 
-    allUpdateTypes,
-    '',
-    '// Link resource types',
-    allLinkResourceTypes
-  ].join('\n')
-
-  writeFileSync(join(outDir, 'resources.ts'), resourcesContent, 'utf8')
+  return { pivotKey, pivotType, mounts }
 }
 
-function extractResourceSchemas(data: any): Array<{ name: string; schema: SchemaWithResource }> {
-  const out: Array<{ name: string; schema: SchemaWithResource }> = []
-  if (data.components?.schemas) {
-    for (const [name, schema] of Object.entries(data.components.schemas)) {
-      if ((schema as any)._resource) {
-        out.push({ name, schema: schema as SchemaWithResource })
-      }
-    }
-  }
-  return out
-}
-
-function extractLinkSchemas(data: any): Array<{ name: string; schema: any }> {
-  const out: Array<{ name: string; schema: any }> = []
-  if (data.components?.schemas) {
-    for (const [name, schema] of Object.entries(data.components.schemas)) {
-      if ((schema as any)._malevich_ogm_link) {
-        out.push({ name, schema })
-      }
-    }
-  }
-  return out
-}
-
-function findPivotField(schema: any, nodeType: string): string | null {
-  // Use explicit pivot_key from _resource.info if available
-  if (schema._resource?.info?.pivot_key) {
-    return schema._resource.info.pivot_key
+function inferPivotType(resourceName: string): string {
+  const mappings: Record<string, string> = {
+    'BasicCaseResource': 'Case',
+    'MessageResource': 'ChatMessage',
+    'UserSystemLayoutResource': 'User',
+    'TicketDetailResource': 'Ticket',
+    'NotRestrictedTicketDetailResource': 'Ticket'
   }
   
-  // Fallback to old logic if no explicit pivot_key
+  if (mappings[resourceName]) return mappings[resourceName]
+  if (resourceName.endsWith('Resource')) return resourceName.slice(0, -8)
+  return resourceName
+}
+
+function inferPivotKey(schema: any, nodeType: string): string | null {
   if (!schema.properties) return null
   
-  // Look for a field that matches the node type (case-insensitive)
-  for (const [fieldName, fieldSchema] of Object.entries(schema.properties)) {
-    if (typeof fieldSchema === 'object' && fieldSchema !== null) {
-      const field = fieldSchema as any
-      
-      // Skip ResourceEdge fields
-      if (field.$ref && field.$ref.includes('ResourceEdge_')) continue
-      if (field.anyOf && field.anyOf.some((variant: any) => 
-        variant.$ref && variant.$ref.includes('ResourceEdge_')
-      )) continue
-      
-      // Check if field name matches node type (case-insensitive)
-      const fieldLower = fieldName.toLowerCase()
-      const nodeLower = nodeType.toLowerCase()
-      
-      if (fieldLower === nodeLower || 
-          fieldLower === nodeLower.replace(/([A-Z])/g, '_$1').toLowerCase() ||
-          fieldLower.replace(/_/g, '') === nodeLower) {
-        return fieldName
-      }
-    }
-  }
+  const nodeTypeLower = nodeType.toLowerCase()
   
-  // Fallback: look for first non-ResourceEdge field
   for (const [fieldName, fieldSchema] of Object.entries(schema.properties)) {
-    if (typeof fieldSchema === 'object' && fieldSchema !== null) {
+    if (typeof fieldSchema !== 'object' || !fieldSchema) continue
+    
       const field = fieldSchema as any
-      
-      if (field.$ref && field.$ref.includes('ResourceEdge_')) continue
-      if (field.anyOf && field.anyOf.some((variant: any) => 
-        variant.$ref && variant.$ref.includes('ResourceEdge_')
-      )) continue
-      
+    if (field.$ref?.includes('ResourceEdge_')) continue
+    
+    const fieldLower = fieldName.toLowerCase()
+    if (fieldLower === nodeTypeLower || 
+        fieldLower.replace(/_/g, '') === nodeTypeLower) {
       return fieldName
     }
   }
@@ -288,67 +301,54 @@ function findPivotField(schema: any, nodeType: string): string | null {
   return null
 }
 
-function mapResourceToNodeType(resourceName: string, schema?: any): string {
-  // Use explicit pivot_type from _resource.info if available
-  if (schema?._resource?.info?.pivot_type) {
-    return schema._resource.info.pivot_type
+async function generateLinkTypes(linkSchemas: any[], usedLinkTypes: Set<string>, allSchemas: Record<string, any>): Promise<string> {
+  const generatedLinks: string[] = []
+  
+  for (const { name, schema } of linkSchemas) {
+    const interfaceCode = generateLinkInterface(name, schema, allSchemas)
+    if (interfaceCode.trim()) {
+      generatedLinks.push(interfaceCode.trim())
+    }
   }
   
-  // Handle special resource-to-node mappings (fallback)
-  const mappings: Record<string, string> = {
-    'BasicCaseResource': 'Case',
-    'MessageResource': 'ChatMessage',
-    'UserSystemLayoutResource': 'User',
-    'CaseChangeResource': 'CaseChange',
-    'TicketChangeResource': 'TicketChange',
-    'CommentResource': 'Comment',
-    'ContactResource': 'Contact',
-    'SiteResource': 'Site',
-    'OrganizationResource': 'Organization',
-    'ClientCompanyResource': 'ClientCompany',
-    'ClientCompanyInfo': 'ClientCompany',
-    'CaseCategoryResource': 'CaseCategory',
-    'CaseTypeResource': 'CaseType',
-    'TicketTypeResource': 'TicketType',
-    'ChatResource': 'Chat',
-    'InvitationResource': 'Invitation',
-    'TicketDetailResource': 'Ticket',
-    'NotRestrictedTicketDetailResource': 'Ticket',
-    'TicketResource': 'Ticket',
-    'UserOrganizationResource': 'Organization'
-  }
+  const additionalLinks = Array.from(usedLinkTypes)
+    .filter(t => t !== 'Link' && !linkSchemas.some(l => l.name === t))
+    .map(t => `export interface ${t} extends Link {}`)
   
-  if (mappings[resourceName]) {
-    return mappings[resourceName]
-  }
-  
-  // Default: remove Resource suffix
-  if (resourceName.endsWith('Resource')) {
-    return resourceName.slice(0, -8)
-  }
-  
-  return resourceName
+  return [...generatedLinks, ...additionalLinks].join('\n\n')
 }
 
-function removeReferences(obj: any): any {
-  if (Array.isArray(obj)) {
-    return obj.map(removeReferences)
-  }
+function extractResourceSchemas(data: any): ResourceSchema[] {
+  const schemas: ResourceSchema[] = []
   
-  if (obj && typeof obj === 'object') {
-    if (obj.$ref) {
-      // Replace $ref with a generic type
-      return { type: 'string', description: 'Reference to external schema' }
-    }
-    
-    const result: any = {}
-    for (const [key, value] of Object.entries(obj)) {
-      if (key !== '$ref') {
-        result[key] = removeReferences(value)
+  if (data.components?.schemas) {
+    for (const [name, schema] of Object.entries(data.components.schemas)) {
+      const s = schema as any
+      if (s._resource) {
+        // Sanitize name to be valid TypeScript identifier
+        const sanitizedName = name.replace(/[^a-zA-Z0-9_]/g, '')
+        schemas.push({
+          name: sanitizedName,
+          schema: s,
+          meta: s._resource
+        })
       }
     }
-    return result
   }
   
-  return obj
+  return schemas
+}
+
+function extractLinkSchemas(data: any): Array<{ name: string; schema: any }> {
+  const schemas: Array<{ name: string; schema: any }> = []
+  
+  if (data.components?.schemas) {
+    for (const [name, schema] of Object.entries(data.components.schemas)) {
+      if (isOgmLink(schema)) {
+        schemas.push({ name, schema })
+      }
+    }
+  }
+  
+  return schemas
 } 

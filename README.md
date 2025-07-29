@@ -12,8 +12,8 @@
 ## Nuxt 3 Quick Start
 
 ```bash
-# Install from GitHub Packages
-npm i @malevichai/nova-ts
+# Install from NPM
+npm install @malevichai/nova-ts
 ```
 
 `nuxt.config.ts`:
@@ -42,12 +42,6 @@ The module fetches the schema, writes the generated types, and registers the fol
 
 ```bash
 npm install @malevichai/nova-ts
-```
-
-**Note:** This package is published to GitHub Packages. You may need to configure npm to use GitHub Packages for the `@malevichai` scope:
-
-```bash
-npm config set @malevichai:registry https://npm.pkg.github.com
 ```
 
 ### Basic Usage
@@ -289,8 +283,6 @@ npm test
 npm run generate test/sample-schema.json
 ```
 
-## 🔧 Development
-
 ### Contributing
 
 1. Fork the repository
@@ -304,29 +296,35 @@ npm run generate test/sample-schema.json
 
 ### Publishing
 
-This package uses automated publishing to GitHub Packages via GitHub Actions:
+This package uses automated publishing to NPM via GitHub Actions:
 
 #### Automated Publishing Process
-1. **Automated Releases**: The package uses [release-please](https://github.com/googleapis/release-please) for automated version management
-2. **Create Release**: When you merge changes to `main`, release-please will create a release PR
-3. **Publish**: When the release PR is merged, a GitHub release is created and the package is automatically published to GitHub Packages
+1. **Create Release**: Tag a new version and push it to GitHub
+2. **GitHub Release**: Create a GitHub release from the tag
+3. **Automatic Publishing**: GitHub Action automatically builds, tests, and publishes to NPM
 
-The package is published to GitHub Packages with the scoped name `@malevichai/nova-ts`.
+The package is published to NPM with the scoped name `@malevichai/nova-ts`.
 
-#### Manual Release (if needed)
+#### Release Process
+
 ```bash
-# Update version
-npm version patch|minor|major
-
-# Create and push tag
-git push --follow-tags
+# Tag a new version
+git tag v0.0.2
+git push origin v0.0.2
 
 # Create GitHub release (triggers publishing)
-gh release create v1.0.0 --generate-notes
+gh release create v0.0.2 --generate-notes
+```
+
+#### Manual Publishing (if needed)
+```bash
+npm run build
+npm test
+npm publish --access public
 ```
 
 #### Required Secrets
-No additional secrets are required! The publishing workflow uses the built-in `GITHUB_TOKEN` which is automatically available in GitHub Actions.
+You need to add `NPM_TOKEN` as a GitHub repository secret for automated publishing to work.
 
 ### Available Scripts
 
@@ -341,9 +339,8 @@ No additional secrets are required! The publishing workflow uses the built-in `G
 The project includes comprehensive GitHub Actions workflows:
 
 - **CI** (`ci.yml`): Runs tests on Node.js 18, 20, and 22 for every push and PR
-- **Release Please** (`release.yml`): Automates version management and release creation
-- **Publish** (`publish.yml`): Publishes to GitHub Packages on release
+- **Publish** (`publish.yml`): Publishes to NPM on GitHub release
 
 ## 📝 License
 
-MIT # nova-ts
+MIT
