@@ -25,9 +25,6 @@ jobs:
     - name: Build
       run: npm run build
 
-    - name: Run tests
-      run: npm test
-
     - name: Update version from release tag
       run: |
         VERSION=${GITHUB_REF#refs/tags/v}

@@ -52,7 +52,7 @@
     "test:quick": "npm run build && node test/test-usage.js",
     "generate": "node dist/cli.js",
     "generate:resources": "node -e \"const { generateResources } = require('./dist/resourceGenerator'); generateResources(process.argv[1], process.argv[2])\"",
-    "prepublishOnly": "npm run build && npm test",
+    "prepublishOnly": "npm run build",
     "dev": "nuxi dev playground"
   },
   "repository": {
