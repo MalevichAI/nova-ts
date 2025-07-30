@@ -1,6 +1,6 @@
 {
   "name": "@malevichai/nova-ts",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "TypeScript types and generator for Nova resources with OGM metadata",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -87,7 +87,9 @@
   "jest": {
     "preset": "ts-jest/presets/default-esm",
     "testEnvironment": "node",
-    "extensionsToTreatAsEsm": [".ts"],
+    "extensionsToTreatAsEsm": [
+      ".ts"
+    ],
     "moduleNameMapper": {
       "^(\\.{1,2}/.*)\\.js$": "$1"
     },
