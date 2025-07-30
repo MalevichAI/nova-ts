@@ -1,5 +1,4 @@
 import { readFileSync } from 'node:fs'
-import { URL } from 'node:url'
 
 export class SchemaLoadError extends Error {
   constructor(message: string, public source: string, public cause?: unknown) {

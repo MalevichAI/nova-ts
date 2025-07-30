@@ -170,14 +170,14 @@ async function extractOgmSchemas(data: any): Promise<SchemaWithOgm[]> {
     for (const [name, schema] of Object.entries(data.components.schemas)) {
       const s = schema as any
       const isNode = isOgmNode(s)
-      const isLink = isOgmLink(s)
+      // Only extract nodes, not links (links are handled in resources.ts)
       
-      if (isNode || isLink) {
+      if (isNode) {
         schemas.push({
           name: sanitizeName(name),
           schema: s,
-          isNode,
-          isLink,
+          isNode: true,
+          isLink: false,
           metadata: getOgmMetadata(s)
         })
       }
