@@ -1,8 +1,37 @@
-import { writeFileSync, existsSync, mkdirSync } from 'node:fs'
-import { join } from 'node:path'
 import { generate as generateNodes } from './generator.js'
 import { getSchema } from './schemaLoader.js'
 import { cleanupSchema, isOgmLink } from './ogmHelpers.js'
+
+// Helper functions for Node.js operations with environment detection
+async function ensureDirectoryExists(dirPath: string): Promise<void> {
+  if (typeof process !== 'undefined' && process.versions?.node) {
+    const { existsSync, mkdirSync } = await import('node:fs')
+    if (!existsSync(dirPath)) {
+      mkdirSync(dirPath, { recursive: true })
+    }
+  } else {
+    throw new Error('Directory operations are not available in browser environment')
+  }
+}
+
+async function writeFile(filePath: string, content: string): Promise<void> {
+  if (typeof process !== 'undefined' && process.versions?.node) {
+    const { writeFileSync } = await import('node:fs')
+    writeFileSync(filePath, content, 'utf8')
+  } else {
+    throw new Error('File system operations are not available in browser environment')
+  }
+}
+
+async function joinPath(...paths: string[]): Promise<string> {
+  if (typeof process !== 'undefined' && process.versions?.node) {
+    const { join } = await import('node:path')
+    return join(...paths)
+  } else {
+    // Simple path joining for browser environments (though this shouldn't be used there)
+    return paths.join('/')
+  }
+}
 
 interface ResourceMeta {
   name?: string
@@ -162,12 +191,10 @@ function generateLinkInterface(name: string, schema: any, allSchemas: Record<str
 export async function generateResources(source: string | object, outDir: string): Promise<void> {
   const data = await getSchema(source) as any
 
-  if (!existsSync(outDir)) {
-    mkdirSync(outDir, { recursive: true })
-  }
+  await ensureDirectoryExists(outDir)
 
   const nodesTs = await generateNodes(data)
-  writeFileSync(join(outDir, 'nodes.ts'), nodesTs, 'utf8')
+  await writeFile(await joinPath(outDir, 'nodes.ts'), nodesTs)
 
   const resourceSchemas = extractResourceSchemas(data)
   const linkSchemas = extractLinkSchemas(data)
@@ -205,8 +232,9 @@ export async function generateResources(source: string | object, outDir: string)
     abstractTypes.join('\n\n')
   ].join('\n\n')
 
-  writeFileSync(join(outDir, 'resources.ts'), output, 'utf8')
-  console.log(`✅ Generated resources to ${join(outDir, 'resources.ts')}`)
+  const resourcesPath = await joinPath(outDir, 'resources.ts')
+  await writeFile(resourcesPath, output)
+  console.log(`✅ Generated resources to ${resourcesPath}`)
 }
 
 function generateAbstractResources(resources: ResourceSchema[]): {
