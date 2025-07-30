@@ -2,8 +2,24 @@ import { defineNuxtModule, addTypeTemplate, createResolver } from '@nuxt/kit'
 import { generate } from './generator.js'
 import { generateResources } from './resourceGenerator.js'
 import { getSchema } from './schemaLoader.js'
-import { resolve } from 'node:path'
-import { mkdirSync, existsSync, writeFileSync } from 'node:fs'
+
+// Helper functions for Node.js operations
+async function resolvePath(...paths: string[]): Promise<string> {
+  const { resolve } = await import('node:path')
+  return resolve(...paths)
+}
+
+async function ensureDirectoryExists(dirPath: string): Promise<void> {
+  const { existsSync, mkdirSync } = await import('node:fs')
+  if (!existsSync(dirPath)) {
+    mkdirSync(dirPath, { recursive: true })
+  }
+}
+
+async function directoryExists(dirPath: string): Promise<boolean> {
+  const { existsSync } = await import('node:fs')
+  return existsSync(dirPath)
+}
 
 export interface ModuleOptions {
   schemaUrl?: string
@@ -34,22 +50,20 @@ export default defineNuxtModule<ModuleOptions>({
     }
 
     const source = options.schemaUrl || options.schemaPath!
-    const outDir = resolve(nuxt.options.rootDir, options.outDir!)
+    const outDir = await resolvePath(nuxt.options.rootDir, options.outDir!)
 
     async function generateTypes() {
       try {
         const schema = await getSchema(source)
         
         if (options.generateResources) {
-          if (!existsSync(outDir)) {
-            mkdirSync(outDir, { recursive: true })
-          }
+          await ensureDirectoryExists(outDir)
           
           await generateResources(schema, outDir)
           console.log(`[nova-ts] ✅ Generated resources in ${outDir}`)
           
-          nuxt.options.alias['#nova-types/nodes'] = resolve(outDir, 'nodes.ts')
-          nuxt.options.alias['#nova-types/resources'] = resolve(outDir, 'resources.ts')
+          nuxt.options.alias['#nova-types/nodes'] = await resolvePath(outDir, 'nodes.ts')
+          nuxt.options.alias['#nova-types/resources'] = await resolvePath(outDir, 'resources.ts')
         } else {
           const nodeTypes = await generate(schema)
           
@@ -70,7 +84,7 @@ export default defineNuxtModule<ModuleOptions>({
 
     if (options.watch && nuxt.options.dev) {
       nuxt.hook('builder:watch', async (event, path) => {
-        if (options.schemaPath && path === resolve(nuxt.options.rootDir, options.schemaPath)) {
+        if (options.schemaPath && path === await resolvePath(nuxt.options.rootDir, options.schemaPath)) {
           console.log('[nova-ts] Schema file changed, regenerating types...')
           await generateTypes()
         }
@@ -85,15 +99,15 @@ export default defineNuxtModule<ModuleOptions>({
       })
     }
 
-    nuxt.hook('imports:dirs', (dirs) => {
-      if (options.generateResources && existsSync(outDir)) {
+    nuxt.hook('imports:dirs', async (dirs) => {
+      if (options.generateResources && await directoryExists(outDir)) {
         dirs.push(outDir)
       }
     })
 
-    nuxt.hook('prepare:types', ({ references }) => {
+    nuxt.hook('prepare:types', async ({ references }) => {
       if (!options.generateResources) {
-        references.push({ path: resolve(nuxt.options.buildDir, 'nova-types.d.ts') })
+        references.push({ path: await resolvePath(nuxt.options.buildDir, 'nova-types.d.ts') })
       }
     })
   }
