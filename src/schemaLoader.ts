@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs'
-
 export class SchemaLoadError extends Error {
   constructor(message: string, public source: string, public cause?: unknown) {
     super(message)
@@ -26,6 +24,20 @@ export function isJsonString(source: string): boolean {
   } catch {
     return false
   }
+}
+
+async function readFileContent(filePath: string): Promise<string> {
+  // Check if we're in a Node.js environment
+  if (typeof process !== 'undefined' && process.versions?.node) {
+    try {
+      const { readFileSync } = await import('node:fs')
+      return readFileSync(filePath, 'utf8')
+    } catch (error) {
+      throw new Error(`Failed to read file: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  
+  throw new Error('File system operations are not available in browser environment')
 }
 
 export async function getSchema(source: string | object): Promise<object> {
@@ -55,7 +67,7 @@ export async function getSchema(source: string | object): Promise<object> {
       return await response.json()
     }
 
-    const content = readFileSync(trimmed, 'utf8')
+    const content = await readFileContent(trimmed)
     return JSON.parse(content)
   } catch (error) {
     if (error instanceof SchemaLoadError) {
