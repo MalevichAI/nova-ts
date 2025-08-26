@@ -7,6 +7,7 @@ export interface Base {
     uid: string
     created_at?: string | null
     updated_at?: string | null
+    type_: string
 }
 
 export interface Link extends Base {}
@@ -74,3 +75,43 @@ export type LinkResource<T> = T extends { __pk: infer PK; __pt: infer PT; __r: i
 
 export type UnlinkResource<T> = never
 export type DeleteResource<T> = never
+
+export interface ResourceInfo {
+    name: string
+    description?: string | null
+    pivot_key: string
+    pivot_type: string
+    pivot_description?: string | null
+    display_name?: string | null
+    mounts: Record<string, ResourceMount>
+    computed: Record<string, ComputedField>
+    [key: string]: any  
+}
+
+export interface ResourceMount {
+    is_resource: boolean
+    is_foreign: boolean
+    is_array: boolean
+    pivot_type: string
+    pivot_key?: string | null
+    info?: ResourceInfo | null
+    relation_type: string
+    relation_name: string
+    relation_model: string
+    description?: string | null
+    [key: string]: any
+}
+
+export interface ComputedField {
+    type: string
+    description?: string | null
+    [key: string]: any
+}
+
+export interface ResourceOptions {
+    info: ResourceInfo
+}
+
+export interface RouteResourceOptions {
+    'x-nova-resource': ResourceOptions
+}

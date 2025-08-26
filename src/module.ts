@@ -50,7 +50,7 @@ export default defineNuxtModule<ModuleOptions>({
     }
 
     const source = options.schemaUrl || options.schemaPath!
-    const outDir = await resolvePath(nuxt.options.rootDir, options.outDir!)
+    const outDir = await resolvePath(nuxt.options.rootDir.replace(/\/+$/, ''), options.outDir!)
 
     async function generateTypes() {
       try {
@@ -84,7 +84,7 @@ export default defineNuxtModule<ModuleOptions>({
 
     if (options.watch && nuxt.options.dev) {
       nuxt.hook('builder:watch', async (event, path) => {
-        if (options.schemaPath && path === await resolvePath(nuxt.options.rootDir, options.schemaPath)) {
+        if (options.schemaPath && path === await resolvePath(nuxt.options.rootDir.replace(/\/+$/, ''), options.schemaPath)) {
           console.log('[nova-ts] Schema file changed, regenerating types...')
           await generateTypes()
         }

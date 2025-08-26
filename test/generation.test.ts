@@ -8,7 +8,7 @@ import path from 'node:path'
 
 describe('Type Generation', () => {
   test('generated node types should compile without errors', async () => {
-    const schemaPath = path.resolve(__dirname, '../openapi.json')
+    const schemaPath = path.resolve(__dirname, 'sample-schema.json')
     
     let output: string
     try {
@@ -60,7 +60,7 @@ describe('Type Generation', () => {
   })
 
   test('generated resource types should compile without errors', async () => {
-    const schemaPath = path.resolve(__dirname, '../openapi.json')
+    const schemaPath = path.resolve(__dirname, 'sample-schema.json')
     
     const dir = await fs.mkdtemp(path.join(tmpdir(), 'nova-ts-'))
     

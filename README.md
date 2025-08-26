@@ -135,7 +135,7 @@ This generates:
 
 ```ts
 import type { MaterializedResource, CreateResource, UpdateResource } from '@malevichai/nova-ts'
-import type { TaskResource } from '~/types/generated/resources'
+import type { TaskResource } from '@/types/generated/resources'
 
 // Reading existing data
 type TaskProxy = MaterializedResource<TaskResource>

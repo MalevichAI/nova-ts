@@ -1,6 +1,8 @@
 import { generate as generateNodes } from './generator.js'
 import { getSchema } from './schemaLoader.js'
 import { cleanupSchema, isOgmLink } from './ogmHelpers.js'
+import { resourceOptionsManager } from './options.js'
+import { ResourceOptions } from './types.js'
 
 // Helper functions for Node.js operations with environment detection
 async function ensureDirectoryExists(dirPath: string): Promise<void> {
@@ -31,6 +33,178 @@ async function joinPath(...paths: string[]): Promise<string> {
     // Simple path joining for browser environments (though this shouldn't be used there)
     return paths.join('/')
   }
+}
+
+// New functions for handling dedicated resource/node endpoints
+async function isResourceEndpoint(source: string): Promise<boolean> {
+  return source.includes('/resources.json')
+}
+
+async function isNodeEndpoint(source: string): Promise<boolean> {
+  return source.includes('/nodes.json')
+}
+
+async function isNovaServer(source: string): Promise<boolean> {
+  // Check if source looks like a base URL that could have Nova endpoints
+  if (typeof source !== 'string') return false
+  
+  // Must be a URL and not already pointing to a specific endpoint
+  if (!source.startsWith('http://') && !source.startsWith('https://')) return false
+  if (source.includes('.json') || source.includes('/openapi')) return false
+  
+  return true
+}
+
+async function checkEndpointAvailability(url: string): Promise<boolean> {
+  try {
+    // Try to fetch a small amount of data to check if endpoint exists
+    await getSchema(url)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function detectNovaEndpoints(baseUrl: string): Promise<{
+  hasResources: boolean
+  hasNodes: boolean
+  resourcesUrl: string
+  nodesUrl: string
+}> {
+  const cleanBaseUrl = baseUrl.replace(/\/$/, '') // Remove trailing slash
+  const resourcesUrl = `${cleanBaseUrl}/resources.json`
+  const nodesUrl = `${cleanBaseUrl}/nodes.json`
+  
+  const [hasResources, hasNodes] = await Promise.all([
+    checkEndpointAvailability(resourcesUrl),
+    checkEndpointAvailability(nodesUrl)
+  ])
+  
+  return { hasResources, hasNodes, resourcesUrl, nodesUrl }
+}
+
+async function fetchResourcesData(source: string): Promise<Record<string, any>> {
+  const data = await getSchema(source)
+  return data as Record<string, any>
+}
+
+async function fetchNodesData(source: string): Promise<Record<string, any>> {
+  const data = await getSchema(source)  
+  return data as Record<string, any>
+}
+
+function processResourcesFromEndpoint(resourcesData: Record<string, any>): Map<string, ResourceOptions> {
+  const resourceOptions = new Map<string, ResourceOptions>()
+  
+  for (const [resourceName, resourceInfo] of Object.entries(resourcesData)) {
+    if (resourceInfo && typeof resourceInfo === 'object') {
+      const options: ResourceOptions = {
+        info: {
+          name: resourceInfo.name || resourceName,
+          description: resourceInfo.description,
+          pivot_key: resourceInfo.pivot_key,
+          pivot_type: resourceInfo.pivot_type,
+          pivot_description: resourceInfo.pivot_description,
+          display_name: resourceInfo.display_name,
+          mounts: resourceInfo.mounts || {},
+          computed: resourceInfo.computed || {}
+        }
+      }
+      
+      resourceOptions.set(resourceName, options)
+      resourceOptionsManager.setResourceOptions(resourceName, options)
+    }
+  }
+  
+  return resourceOptions
+}
+
+function processNodesFromEndpoint(nodesData: Record<string, any>): any {
+  // Convert nodes data to OpenAPI-like format for compatibility with existing generator
+  const components = {
+    schemas: {} as Record<string, any>
+  }
+  
+  for (const [nodeName, nodeSchema] of Object.entries(nodesData)) {
+    if (nodeSchema && typeof nodeSchema === 'object') {
+      // Transform node schema to be compatible with existing generator
+      const transformedSchema = {
+        ...nodeSchema,
+        'x-ogm-link': nodeSchema._malevich_ogm_node ? true : false
+      }
+      components.schemas[nodeName] = transformedSchema
+    }
+  }
+  
+  return { components }
+}
+
+async function generateFromResourcesEndpoint(source: string, outDir: string): Promise<void> {
+  console.log(`🔄 Generating from resources endpoint: ${source}`)
+  
+  // Fetch resources data
+  const resourcesData = await fetchResourcesData(source)
+  
+  // Process resources into options
+  const resourceOptions = processResourcesFromEndpoint(resourcesData)
+  
+  // Generate options file
+  if (resourceOptions.size > 0) {
+    await generateAllResourceOptionsFile(resourceOptions, outDir)
+    console.log(`✅ Generated options.ts with ${resourceOptions.size} resources from /resources.json`)
+  } else {
+    console.log('⚠️  No resources found in /resources.json endpoint')
+  }
+  
+  // For resources endpoint, we might need to fetch nodes separately or skip nodes generation
+  console.log(`📝 Note: Only resource options generated. For complete types, also process /nodes.json endpoint.`)
+}
+
+async function generateFromNodesEndpoint(source: string, outDir: string): Promise<void> {
+  console.log(`🔄 Generating from nodes endpoint: ${source}`)
+  
+  // Fetch nodes data
+  const nodesData = await fetchNodesData(source)
+  
+  // Process nodes data to be compatible with existing generator
+  const processedData = processNodesFromEndpoint(nodesData)
+  
+  // Generate nodes file
+  const nodesTs = await generateNodes(processedData)
+  await writeFile(await joinPath(outDir, 'nodes.ts'), nodesTs)
+  console.log(`✅ Generated nodes.ts with ${Object.keys(nodesData).length} node types from /nodes.json`)
+  
+  // For nodes endpoint, we don't have resource options, so skip that part
+  console.log(`📝 Note: Only node types generated. For resource options, also process /resources.json endpoint.`)
+}
+
+// Helper function to generate from both endpoints in sequence
+export async function generateFromBothEndpoints(resourcesUrl: string, nodesUrl: string, outDir: string): Promise<void> {
+  console.log(`🔄 Generating from both endpoints...`)
+  console.log(`   Resources: ${resourcesUrl}`)
+  console.log(`   Nodes: ${nodesUrl}`)
+  
+  await ensureDirectoryExists(outDir)
+  
+  // Generate from resources endpoint
+  const resourcesData = await fetchResourcesData(resourcesUrl)
+  const resourceOptions = processResourcesFromEndpoint(resourcesData)
+  
+  // Generate from nodes endpoint
+  const nodesData = await fetchNodesData(nodesUrl)
+  const processedNodesData = processNodesFromEndpoint(nodesData)
+  
+  // Generate all files
+  const nodesTs = await generateNodes(processedNodesData)
+  await writeFile(await joinPath(outDir, 'nodes.ts'), nodesTs)
+  
+  if (resourceOptions.size > 0) {
+    await generateAllResourceOptionsFile(resourceOptions, outDir)
+  }
+  
+  console.log(`✅ Generated complete types:`)
+  console.log(`   - nodes.ts: ${Object.keys(nodesData).length} node types`)
+  console.log(`   - options.ts: ${resourceOptions.size} resource options`)
 }
 
 interface ResourceMeta {
@@ -189,12 +363,64 @@ function generateLinkInterface(name: string, schema: any, allSchemas: Record<str
 }
 
 export async function generateResources(source: string | object, outDir: string): Promise<void> {
-  const data = await getSchema(source) as any
-
   await ensureDirectoryExists(outDir)
+  
+  // Handle specific Nova endpoint URLs (legacy support)
+  if (typeof source === 'string' && await isResourceEndpoint(source)) {
+    await generateFromResourcesEndpoint(source, outDir)
+    return
+  }
+  
+  if (typeof source === 'string' && await isNodeEndpoint(source)) {
+    await generateFromNodesEndpoint(source, outDir)
+    return
+  }
+  
+  // Smart Nova detection - try Nova endpoints first
+  if (typeof source === 'string' && await isNovaServer(source)) {
+    console.log(`🔍 Detecting Nova endpoints at ${source}...`)
+    
+    try {
+      const { hasResources, hasNodes, resourcesUrl, nodesUrl } = await detectNovaEndpoints(source)
+      
+      if (hasResources && hasNodes) {
+        console.log(`✅ Found both Nova endpoints, using Nova generation`)
+        await generateFromBothEndpoints(resourcesUrl, nodesUrl, outDir)
+        return
+      } else if (hasResources) {
+        console.log(`✅ Found /resources.json endpoint, generating resource options only`)
+        console.log(`⚠️  /nodes.json not available - node types will not be generated`)
+        await generateFromResourcesEndpoint(resourcesUrl, outDir)
+        return
+      } else if (hasNodes) {
+        console.log(`✅ Found /nodes.json endpoint, generating node types only`) 
+        console.log(`⚠️  /resources.json not available - resource options will not be generated`)
+        await generateFromNodesEndpoint(nodesUrl, outDir)
+        return
+      } else {
+        console.log(`ℹ️  No Nova endpoints found, falling back to OpenAPI generation`)
+      }
+    } catch (error) {
+      console.log(`⚠️  Error detecting Nova endpoints, falling back to OpenAPI generation`)
+      console.log(`   ${(error as Error).message}`)
+    }
+  }
+  
+  // Fallback to traditional OpenAPI schema generation
+  console.log(`🔄 Using traditional OpenAPI generation...`)
+  const data = await getSchema(source) as any
 
   const nodesTs = await generateNodes(data)
   await writeFile(await joinPath(outDir, 'nodes.ts'), nodesTs)
+
+  // Extract resource options from routes
+  const resourceOptions = extractResourceOptionsFromRoutes(data)
+  
+  // Generate single options file with all resources
+  if (resourceOptions.size > 0) {
+    await generateAllResourceOptionsFile(resourceOptions, outDir)
+    console.log(`✅ Generated options.ts with ${resourceOptions.size} resources`)
+  }
 
   const resourceSchemas = extractResourceSchemas(data)
   const linkSchemas = extractLinkSchemas(data)
@@ -379,4 +605,143 @@ function extractLinkSchemas(data: any): Array<{ name: string; schema: any }> {
   }
   
   return schemas
+}
+
+function extractResourceOptionsFromRoutes(data: any): Map<string, ResourceOptions> {
+  const resourceOptions = new Map<string, ResourceOptions>()
+  
+  if (data.paths) {
+    for (const [path, pathObj] of Object.entries(data.paths)) {
+      if (typeof pathObj === 'object' && pathObj !== null) {
+        const pathMethods = pathObj as any
+        
+        for (const [method, operation] of Object.entries(pathMethods)) {
+          if (typeof operation === 'object' && operation !== null) {
+            const op = operation as any
+            
+            if (op['x-nova-resource']) {
+              const xNovaResource = op['x-nova-resource']
+              
+              // Handle array format (multiple resources in one operation)
+              if (Array.isArray(xNovaResource)) {
+                for (const resourceInfo of xNovaResource) {
+                  if (resourceInfo?.name) {
+                    // Convert direct resource info to expected ResourceOptions format
+                    const options: ResourceOptions = {
+                      info: {
+                        name: resourceInfo.name,
+                        pivot_key: resourceInfo.pivot_key,
+                        pivot_type: resourceInfo.pivot_type,
+                        mounts: resourceInfo.mounts || {},
+                        computed: resourceInfo.computed || {},
+                        ...(resourceInfo.description && { description: resourceInfo.description }),
+                        ...(resourceInfo.pivot_description && { pivot_description: resourceInfo.pivot_description }),
+                        ...(resourceInfo.display_name && { display_name: resourceInfo.display_name })
+                      }
+                    }
+                    resourceOptions.set(resourceInfo.name, options)
+                    resourceOptionsManager.setResourceOptions(resourceInfo.name, options)
+                  }
+                }
+              } 
+              // Handle object format with info wrapper
+              else if (xNovaResource.info?.name) {
+                const options = xNovaResource as ResourceOptions
+                resourceOptions.set(options.info.name, options)
+                resourceOptionsManager.setResourceOptions(options.info.name, options)
+              }
+              // Handle direct resource info object
+              else if (xNovaResource?.name) {
+                const options: ResourceOptions = {
+                  info: {
+                    name: xNovaResource.name,
+                    pivot_key: xNovaResource.pivot_key,
+                    pivot_type: xNovaResource.pivot_type,
+                    mounts: xNovaResource.mounts || {},
+                    computed: xNovaResource.computed || {},
+                    ...(xNovaResource.description && { description: xNovaResource.description }),
+                    ...(xNovaResource.pivot_description && { pivot_description: xNovaResource.pivot_description }),
+                    ...(xNovaResource.display_name && { display_name: xNovaResource.display_name })
+                  }
+                }
+                resourceOptions.set(xNovaResource.name, options)
+                resourceOptionsManager.setResourceOptions(xNovaResource.name, options)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  return resourceOptions
+}
+
+function cleanOptionsObject(obj: any): any {
+  if (obj === null || obj === undefined) {
+    return undefined
+  }
+  
+  if (Array.isArray(obj)) {
+    return obj.map(cleanOptionsObject).filter(item => item !== undefined)
+  }
+  
+  if (typeof obj === 'object') {
+    const cleaned: any = {}
+    for (const [key, value] of Object.entries(obj)) {
+      const cleanedValue = cleanOptionsObject(value)
+      if (cleanedValue !== undefined && cleanedValue !== null) {
+        cleaned[key] = cleanedValue
+      }
+    }
+    
+    // Ensure required properties exist for ResourceInfo objects
+    if (cleaned.name && cleaned.pivot_key && cleaned.pivot_type) {
+      if (!cleaned.mounts) cleaned.mounts = {}
+      if (!cleaned.computed) cleaned.computed = {}
+    }
+    
+    return Object.keys(cleaned).length > 0 ? cleaned : undefined
+  }
+  
+  return obj
+}
+
+async function generateAllResourceOptionsFile(resourceOptions: Map<string, ResourceOptions>, outDir: string): Promise<void> {
+  const filePath = await joinPath(outDir, 'options.ts')
+  
+  let content = `import { ResourceOptions } from '@malevichai/nova-ts'\n\n`
+  
+  const optionsArray: Array<{name: string, options: ResourceOptions}> = []
+  
+  for (const [resourceName, options] of resourceOptions) {
+    const sanitized = sanitizeName(resourceName)
+    const cleanedOptions = cleanOptionsObject(options)
+    
+    content += `export const ${sanitized}Options: ResourceOptions = ${JSON.stringify(cleanedOptions, null, 2)}\n\n`
+    optionsArray.push({name: sanitized, options: cleanedOptions})
+  }
+  
+  // Create a master options object
+  content += `export const AllResourceOptions = {\n`
+  for (const {name} of optionsArray) {
+    content += `  ${name}: ${name}Options,\n`
+  }
+  content += `} as const\n\n`
+  
+  // Create a type-safe getter function
+  content += `export function getResourceOptions(resourceName: string): ResourceOptions | undefined {\n`
+  content += `  return (AllResourceOptions as any)[resourceName + 'Options']\n`
+  content += `}\n\n`
+  
+  // Export resource names
+  content += `export const ResourceNames = [\n`
+  for (const {name} of optionsArray) {
+    content += `  '${name}',\n`
+  }
+  content += `] as const\n\n`
+  
+  content += `export type ResourceName = typeof ResourceNames[number]\n`
+  
+  await writeFile(filePath, content)
 } 

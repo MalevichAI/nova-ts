@@ -192,6 +192,7 @@ function generateBaseInterfaces(): string {
   uid: string
   created_at?: string | null
   updated_at?: string | null
+  type_: string
 }
 
 export interface Link extends Base {}
